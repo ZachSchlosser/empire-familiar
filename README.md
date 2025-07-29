@@ -231,9 +231,18 @@ python calendar_functions.py
 python main.py
 ```
 
+## 🚀 Feature Requests & Roadmap
+
+We welcome feature suggestions from team members! Check out our [Feature Requests & Roadmap](FEATURE_REQUESTS.md) to see what's planned and how to suggest new features.
+
+### Quick Links:
+- 📋 [Current Feature Roadmap](FEATURE_REQUESTS.md) - See what's planned for development
+- 💡 [Suggest a Feature](https://github.com/ZachSchlosser/google-calendar-scheduler/issues/new?template=feature_request.md) - Use our feature request template
+- 🤝 [Contributing Guidelines](CONTRIBUTING.md) - Learn how to contribute to the project
+
 ## Contributing
 
-Feel free to improve the natural language parsing, add new features, or fix bugs. The codebase is modular and well-documented for easy modification.
+Feel free to improve the natural language parsing, add new features, or fix bugs. The codebase is modular and well-documented for easy modification. Please see our [Contributing Guidelines](CONTRIBUTING.md) for the best way to suggest features and contribute to the project.
 
 ## License
 
