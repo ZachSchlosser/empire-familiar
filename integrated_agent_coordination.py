@@ -308,9 +308,9 @@ Protocol: {self.PROTOCOL_VERSION}
             from_email = None
             subject = None
             for header in headers:
-                if header['name'] == 'From':
+                if header['name'].lower() == 'from':
                     from_email = header['value']
-                elif header['name'] == 'Subject':
+                elif header['name'].lower() == 'subject':
                     subject = header['value']
             
             # Validate sender email - reject if missing or invalid
