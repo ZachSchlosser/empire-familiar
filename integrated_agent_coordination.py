@@ -313,11 +313,16 @@ Protocol: {self.PROTOCOL_VERSION}
                 elif header['name'] == 'Subject':
                     subject = header['value']
             
+            # Validate sender email - reject if missing or invalid
+            if not from_email or '@' not in from_email or 'example.com' in from_email:
+                logger.warning(f"Invalid sender email in coordination message: {from_email}")
+                return None
+            
             # Create simplified agent identity (we may not have full details)
             from_agent = AgentIdentity(
                 agent_id=tech_data.get('From Agent', 'unknown_agent'),
                 user_name=from_email.split('@')[0] if from_email else 'Unknown User',
-                user_email=from_email or 'unknown@example.com'
+                user_email=from_email
             )
             
             # Determine priority from human content (look for "Priority:" line)
@@ -2037,7 +2042,7 @@ def initialize_integrated_coordination_system(agent_config: Dict[str, Any] = Non
         # Use provided config or auto-detect from Gmail
         if agent_config is None:
             # Auto-detect user email from Gmail authentication
-            user_email = "user@example.com"  # Fallback
+            user_email = None
             try:
                 from gmail_functions import GmailManager
                 gmail = GmailManager()
@@ -2045,21 +2050,30 @@ def initialize_integrated_coordination_system(agent_config: Dict[str, Any] = Non
                 user_email = profile["emailAddress"]
                 logger.info(f"Auto-detected Gmail account: {user_email}")
             except Exception as e:
-                logger.warning(f"Could not auto-detect Gmail account, using fallback: {e}")
+                logger.error(f"Gmail authentication required for coordination system: {e}")
+                raise ValueError("Gmail authentication failed. Please ensure valid credentials.json and token.json are available.")
+            
+            # Validate the detected email
+            if not user_email or '@' not in user_email:
+                raise ValueError("Invalid Gmail account detected. Please check authentication.")
             
             # Generate agent identity from detected email
-            email_prefix = user_email.split('@')[0] if '@' in user_email else "claude"
+            email_prefix = user_email.split('@')[0]
             agent_config = {
                 "agent_id": f"{email_prefix}_claude_agent",
-                "user_name": user_email.split('@')[0].title() if '@' in user_email else "Claude Agent User",
+                "user_name": email_prefix.replace('.', ' ').title(),
                 "user_email": user_email
             }
+        
+        # Validate agent config
+        if not agent_config.get("user_email") or "example.com" in agent_config.get("user_email", ""):
+            raise ValueError("Invalid agent configuration: valid user_email required, no example.com addresses allowed")
         
         # Create agent identity from config
         agent_identity = AgentIdentity(
             agent_id=agent_config.get("agent_id", "claude_agent_v2"),
             user_name=agent_config.get("user_name", "Claude Agent User"),
-            user_email=agent_config.get("user_email", "user@example.com"),
+            user_email=agent_config["user_email"],
             capabilities=[
                 "calendar_access", 
                 "scheduling_coordination", 
