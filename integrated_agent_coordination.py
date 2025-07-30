@@ -11,6 +11,7 @@ import logging
 import base64
 import hashlib
 import time
+import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union, Tuple
 from dataclasses import dataclass, asdict
@@ -164,7 +165,7 @@ class CoordinationMessage:
 # ==================== EMAIL TRANSPORT LAYER ====================
 
 class EmailTransportLayer:
-    """Handles email-based agent communication transport"""
+    """Handles email-based agent communication transport with threading support"""
     
     def __init__(self, agent_identity: AgentIdentity, credentials_file='credentials.json'):
         """Initialize email transport layer"""
@@ -176,26 +177,49 @@ class EmailTransportLayer:
         self.PROTOCOL_VERSION = "agent_coord_v2"
         self.MESSAGE_SEPARATOR = "=== AGENT COORDINATION ==="
         
+        # Threading state for conversation continuity
+        self.conversation_threading: Dict[str, Dict[str, Any]] = {}
+        # conversation_id -> {
+        #   'message_ids': [list of message IDs in order],
+        #   'subject': 'conversation subject',
+        #   'participants': [list of email addresses],
+        #   'thread_id': 'gmail thread ID for archiving'
+        # }
+        
         logger.info(f"Email transport initialized for {agent_identity.agent_id}")
     
     def send_coordination_message(self, message: CoordinationMessage) -> bool:
-        """Send coordination message via email"""
+        """Send coordination message via email with proper threading"""
         try:
-            # Create email subject
-            subject = f"{self.AGENT_SUBJECT_PREFIX} {message.message_type.value.replace('_', ' ').title()}"
+            # Create email subject with conversation context
+            base_subject = f"{self.AGENT_SUBJECT_PREFIX} {message.message_type.value.replace('_', ' ').title()}"
+            
+            # Generate threading headers for conversation continuity
+            threading_headers = self._generate_threading_headers(message, base_subject)
             
             # Create structured email body
             email_body = self._create_coordination_email_body(message)
             
-            # Send via Gmail
+            # Send via Gmail with threading headers
             result = self.gmail.send_email(
                 to_email=message.to_agent_email,
-                subject=subject,
-                body=email_body
+                subject=threading_headers['subject'],
+                body=email_body,
+                threading_headers={
+                    'message_id': threading_headers['message_id'],
+                    'in_reply_to': threading_headers.get('in_reply_to'),
+                    'references': threading_headers.get('references')
+                }
             )
             
             if result:
-                logger.info(f"Coordination message sent to {message.to_agent_email}")
+                # Update conversation threading state
+                self._update_conversation_threading(message, threading_headers['message_id'], result.get('threadId'))
+                logger.info(f"Coordination message sent to {message.to_agent_email} (threaded)")
+                logger.info(f"  Conversation: {message.conversation_id}")
+                logger.info(f"  Message-ID: {threading_headers['message_id']}")
+                if result.get('threadId'):
+                    logger.info(f"  Thread-ID: {result['threadId']}")
                 return True
             else:
                 logger.error(f"Failed to send coordination message to {message.to_agent_email}")
@@ -235,106 +259,463 @@ class EmailTransportLayer:
         # Human-readable header
         human_summary = self._generate_human_summary(message)
         
-        # Structured coordination data
-        coord_data = {
-            'protocol': self.PROTOCOL_VERSION,
-            'message_id': message.message_id,
-            'conversation_id': message.conversation_id,
-            'from_agent': asdict(message.from_agent),
-            'message_type': message.message_type.value,
-            'timestamp': message.timestamp.isoformat(),
-            'priority': message.priority.value,
-            'requires_response': message.requires_response,
-            'expires_at': message.expires_at.isoformat() if message.expires_at else None,
-            'payload': message.payload
-        }
+        # Generate comprehensive human-readable content
         
-        # Encode coordination data
-        encoded_data = base64.b64encode(json.dumps(coord_data).encode()).decode()
-        
-        # Create email body
+        # Create email body - primarily human readable with minimal technical data
         email_body = f"""
 {human_summary}
 
 {self.MESSAGE_SEPARATOR}
-COORDINATION_DATA_START
-{encoded_data}
-COORDINATION_DATA_END
-{self.MESSAGE_SEPARATOR}
-
-This is an automated coordination message between Claude Code agents.
+Message ID: {message.message_id}
+Conversation: {message.conversation_id}
+From Agent: {self.agent_identity.agent_id}
+Message Type: {message.message_type.value}
 Protocol: {self.PROTOCOL_VERSION}
-Agent: {self.agent_identity.agent_id}
 """
         
         return email_body.strip()
     
     def _parse_coordination_email(self, gmail_message: Dict[str, Any]) -> Optional[CoordinationMessage]:
-        """Parse Gmail message into CoordinationMessage"""
+        """Parse Gmail message into CoordinationMessage from human-readable format"""
         try:
             # Get message body
             body = self.gmail.extract_message_body(gmail_message['payload'])
             
-            # Extract coordination data
+            # Extract coordination data from technical identifiers
             if self.MESSAGE_SEPARATOR not in body:
                 return None
             
-            # Find encoded data
-            data_start = body.find("COORDINATION_DATA_START")
-            data_end = body.find("COORDINATION_DATA_END")
-            
-            if data_start == -1 or data_end == -1:
+            # Split body to get technical section
+            parts = body.split(self.MESSAGE_SEPARATOR)
+            if len(parts) < 2:
                 return None
             
-            encoded_data = body[data_start + len("COORDINATION_DATA_START"):data_end].strip()
+            human_content = parts[0].strip()
+            technical_section = parts[1].strip()
             
-            # Decode coordination data
-            coord_data = json.loads(base64.b64decode(encoded_data).decode())
+            # Extract technical identifiers
+            tech_data = {}
+            for line in technical_section.split('\n'):
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    tech_data[key.strip()] = value.strip()
             
-            # Create CoordinationMessage
-            from_agent = AgentIdentity(**coord_data['from_agent'])
+            # Extract payload from human-readable content
+            payload = self._extract_payload_from_human_content(human_content, tech_data.get('Message Type', ''))
+            
+            # Parse from email headers for additional info
+            headers = gmail_message['payload'].get('headers', [])
+            from_email = None
+            subject = None
+            for header in headers:
+                if header['name'] == 'From':
+                    from_email = header['value']
+                elif header['name'] == 'Subject':
+                    subject = header['value']
+            
+            # Create simplified agent identity (we may not have full details)
+            from_agent = AgentIdentity(
+                agent_id=tech_data.get('From Agent', 'unknown_agent'),
+                user_name=from_email.split('@')[0] if from_email else 'Unknown User',
+                user_email=from_email or 'unknown@example.com'
+            )
+            
+            # Determine priority from human content (look for "Priority:" line)
+            priority = Priority.MEDIUM  # default
+            for line in human_content.split('\n'):
+                if line.startswith('• Priority:'):
+                    priority_text = line.split(':', 1)[1].strip().lower()
+                    if priority_text in [p.value for p in Priority]:
+                        priority = Priority(priority_text)
+                    break
+            
+            # Determine if response is needed
+            requires_response = 'Response Needed:' in human_content
+            
+            # Extract Message-ID from email for threading
+            received_message_id = self._extract_message_id_from_email(gmail_message)
+            conversation_id = tech_data.get('Conversation', str(uuid.uuid4()))
+            
+            # Update conversation threading state with received message
+            if received_message_id and conversation_id:
+                self._update_received_message_threading(conversation_id, received_message_id, from_email)
             
             return CoordinationMessage(
-                message_id=coord_data['message_id'],
-                message_type=MessageType(coord_data['message_type']),
+                message_id=tech_data.get('Message ID', str(uuid.uuid4())),
+                message_type=MessageType(tech_data.get('Message Type', 'coordination_ack')),
                 from_agent=from_agent,
                 to_agent_email=self.agent_identity.user_email,
-                timestamp=datetime.fromisoformat(coord_data['timestamp']),
-                conversation_id=coord_data['conversation_id'],
-                priority=Priority(coord_data['priority']),
-                payload=coord_data['payload'],
-                requires_response=coord_data['requires_response'],
-                expires_at=datetime.fromisoformat(coord_data['expires_at']) if coord_data['expires_at'] else None
+                timestamp=datetime.now(),  # Use current time as fallback
+                conversation_id=conversation_id,
+                priority=priority,
+                payload=payload,
+                requires_response=requires_response,
+                expires_at=None  # Could be extracted from human content if needed
             )
             
         except Exception as e:
             logger.error(f"Error parsing coordination email: {e}")
             return None
     
+    def _extract_payload_from_human_content(self, human_content: str, message_type: str) -> Dict[str, Any]:
+        """Extract payload data from human-readable content"""
+        payload = {}
+        
+        try:
+            lines = human_content.split('\n')
+            
+            # Extract different information based on message type
+            if message_type == 'schedule_request':
+                meeting_context = {}
+                for line in lines:
+                    if line.startswith('• Meeting:'):
+                        meeting_context['subject'] = line.split(':', 1)[1].strip()
+                    elif line.startswith('• Duration:'):
+                        duration_text = line.split(':', 1)[1].strip()
+                        # Extract number from "60 minutes"
+                        duration_match = re.search(r'(\d+)', duration_text)
+                        if duration_match:
+                            meeting_context['duration_minutes'] = int(duration_match.group(1))
+                    elif line.startswith('• Participants:'):
+                        participants = line.split(':', 1)[1].strip()
+                        meeting_context['attendees'] = [p.strip() for p in participants.split(',')]
+                    elif line.startswith('• Description:'):
+                        meeting_context['description'] = line.split(':', 1)[1].strip()
+                    elif line.startswith('• Type:'):
+                        meeting_context['meeting_type'] = line.split(':', 1)[1].strip()
+                    elif line.startswith('• Urgency:'):
+                        meeting_context['urgency'] = line.split(':', 1)[1].strip()
+                
+                if meeting_context:
+                    payload['meeting_context'] = meeting_context
+            
+            elif message_type == 'schedule_proposal':
+                proposed_times = []
+                for line in lines:
+                    if line.strip().startswith('Option '):
+                        # Extract time from "Option 1: Tuesday, January 30 at 10:00 AM - 11:00 AM"
+                        time_part = line.split(':', 1)[1].strip()
+                        if ' - ' in time_part:
+                            start_time, end_time = time_part.split(' - ', 1)
+                            proposed_times.append({
+                                'start_time': start_time.strip(),
+                                'end_time': end_time.strip()
+                            })
+                
+                if proposed_times:
+                    payload['proposed_times'] = proposed_times
+            
+            elif message_type == 'schedule_confirmation':
+                for line in lines:
+                    if line.startswith('• Confirmed Time:'):
+                        confirmed_time = line.split(':', 1)[1].strip()
+                        payload['confirmed_time'] = {'start_time': confirmed_time}
+                    elif line.startswith('• Location:'):
+                        payload.setdefault('meeting_details', {})['location'] = line.split(':', 1)[1].strip()
+                    elif line.startswith('• Meeting Link:'):
+                        payload.setdefault('meeting_details', {})['meeting_link'] = line.split(':', 1)[1].strip()
+            
+            elif message_type == 'schedule_rejection':
+                for line in lines:
+                    if line.startswith('• Reason:'):
+                        payload['reason'] = line.split(':', 1)[1].strip()
+                    elif line.startswith('• Suggestion:'):
+                        payload['alternative_suggestion'] = line.split(':', 1)[1].strip()
+        
+        except Exception as e:
+            logger.error(f"Error extracting payload from human content: {e}")
+        
+        return payload
+    
     def _generate_human_summary(self, message: CoordinationMessage) -> str:
-        """Generate human-readable summary of coordination message"""
+        """Generate comprehensive human-readable coordination message"""
         
-        message_type = message.message_type.value.replace('_', ' ').title()
-        from_agent = message.from_agent.user_name
+        # Header with clear message type
+        if message.message_type == MessageType.SCHEDULE_REQUEST:
+            header = "MEETING REQUEST"
+        elif message.message_type == MessageType.SCHEDULE_PROPOSAL:
+            header = "MEETING PROPOSAL"
+        elif message.message_type == MessageType.SCHEDULE_COUNTER_PROPOSAL:
+            header = "ALTERNATIVE PROPOSAL"
+        elif message.message_type == MessageType.SCHEDULE_CONFIRMATION:
+            header = "MEETING CONFIRMED"
+        elif message.message_type == MessageType.SCHEDULE_REJECTION:
+            header = "REQUEST DECLINED"
+        elif message.message_type == MessageType.AVAILABILITY_QUERY:
+            header = "AVAILABILITY CHECK"
+        elif message.message_type == MessageType.AVAILABILITY_RESPONSE:
+            header = "AVAILABILITY RESPONSE"
+        else:
+            header = message.message_type.value.replace('_', ' ').upper()
         
-        summary = f"Agent Coordination: {message_type}\n"
-        summary += f"From: {from_agent} ({message.from_agent.agent_id})\n"
-        summary += f"Priority: {message.priority.value.upper()}\n"
-        summary += f"Time: {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        summary = f"{header}\n"
+        summary += f"• From: {message.from_agent.user_name}'s Assistant\n"
+        summary += f"• Priority: {message.priority.value.upper()}\n"
+        summary += f"• Sent: {message.timestamp.strftime('%B %d, %Y at %I:%M %p')}\n"
         
-        # Add payload-specific summary
+        # Add detailed payload information based on message type
         if message.message_type == MessageType.SCHEDULE_REQUEST:
             if 'meeting_context' in message.payload:
                 ctx = message.payload['meeting_context']
-                summary += f"Meeting: {ctx.get('subject', 'N/A')}\n"
-                summary += f"Duration: {ctx.get('duration_minutes', 'N/A')} minutes\n"
+                summary += f"• Meeting: {ctx.get('subject', 'Meeting')}\n"
+                summary += f"• Duration: {ctx.get('duration_minutes', 30)} minutes\n"
+                if 'attendees' in ctx:
+                    attendees = ', '.join(ctx['attendees'])
+                    summary += f"• Participants: {attendees}\n"
+                if 'description' in ctx and ctx['description']:
+                    summary += f"• Description: {ctx['description']}\n"
+                if 'urgency' in ctx:
+                    summary += f"• Urgency: {ctx['urgency']}\n"
+                if 'meeting_type' in ctx:
+                    summary += f"• Type: {ctx['meeting_type']}\n"
+            
+            if 'preferences' in message.payload:
+                prefs = message.payload['preferences']
+                if 'preferred_times' in prefs:
+                    summary += f"• Preferred Times: {', '.join(prefs['preferred_times'])}\n"
+                if 'time_constraints' in prefs:
+                    summary += f"• Constraints: {prefs['time_constraints']}\n"
         
         elif message.message_type == MessageType.SCHEDULE_PROPOSAL:
             if 'proposed_times' in message.payload:
-                count = len(message.payload['proposed_times'])
-                summary += f"Proposed Times: {count} options\n"
+                times = message.payload['proposed_times']
+                summary += f"• Available Options: {len(times)} time slots\n"
+                for i, time_slot in enumerate(times[:3], 1):  # Show first 3 options
+                    if isinstance(time_slot, dict):
+                        start = time_slot.get('start_time', 'N/A')
+                        end = time_slot.get('end_time', 'N/A')
+                        if start != 'N/A' and end != 'N/A':
+                            try:
+                                start_dt = datetime.fromisoformat(start) if isinstance(start, str) else start
+                                end_dt = datetime.fromisoformat(end) if isinstance(end, str) else end
+                                summary += f"  Option {i}: {start_dt.strftime('%A, %B %d at %I:%M %p')} - {end_dt.strftime('%I:%M %p')}\n"
+                            except:
+                                summary += f"  Option {i}: {start} - {end}\n"
+                if len(times) > 3:
+                    summary += f"  ... and {len(times) - 3} more options\n"
+            
+            if 'context' in message.payload:
+                ctx = message.payload['context']
+                if 'workload_note' in ctx:
+                    summary += f"• Schedule Note: {ctx['workload_note']}\n"
         
-        return summary
+        elif message.message_type == MessageType.SCHEDULE_COUNTER_PROPOSAL:
+            if 'counter_times' in message.payload:
+                times = message.payload['counter_times']
+                summary += f"• Alternative Options: {len(times)} time slots\n"
+                for i, time_slot in enumerate(times[:3], 1):
+                    if isinstance(time_slot, dict):
+                        start = time_slot.get('start_time', 'N/A')
+                        if start != 'N/A':
+                            try:
+                                start_dt = datetime.fromisoformat(start) if isinstance(start, str) else start
+                                summary += f"  Option {i}: {start_dt.strftime('%A, %B %d at %I:%M %p')}\n"
+                            except:
+                                summary += f"  Option {i}: {start}\n"
+            
+            if 'reason' in message.payload:
+                summary += f"• Reason: {message.payload['reason']}\n"
+        
+        elif message.message_type == MessageType.SCHEDULE_CONFIRMATION:
+            if 'confirmed_time' in message.payload:
+                time_info = message.payload['confirmed_time']
+                if isinstance(time_info, dict):
+                    start = time_info.get('start_time', 'N/A')
+                    if start != 'N/A':
+                        try:
+                            start_dt = datetime.fromisoformat(start) if isinstance(start, str) else start
+                            summary += f"• Confirmed Time: {start_dt.strftime('%A, %B %d at %I:%M %p')}\n"
+                        except:
+                            summary += f"• Confirmed Time: {start}\n"
+            
+            if 'meeting_details' in message.payload:
+                details = message.payload['meeting_details']
+                if 'location' in details:
+                    summary += f"• Location: {details['location']}\n"
+                if 'meeting_link' in details:
+                    summary += f"• Meeting Link: {details['meeting_link']}\n"
+            
+            summary += "• Status: Calendar invite will be sent\n"
+        
+        elif message.message_type == MessageType.SCHEDULE_REJECTION:
+            if 'reason' in message.payload:
+                summary += f"• Reason: {message.payload['reason']}\n"
+            if 'alternative_suggestion' in message.payload:
+                summary += f"• Suggestion: {message.payload['alternative_suggestion']}\n"
+        
+        elif message.message_type == MessageType.AVAILABILITY_QUERY:
+            if 'query_period' in message.payload:
+                summary += f"• Time Period: {message.payload['query_period']}\n"
+            if 'duration_needed' in message.payload:
+                summary += f"• Duration Needed: {message.payload['duration_needed']} minutes\n"
+        
+        elif message.message_type == MessageType.AVAILABILITY_RESPONSE:
+            if 'available_slots' in message.payload:
+                slots = message.payload['available_slots']
+                summary += f"• Available Slots: {len(slots)} options found\n"
+                for i, slot in enumerate(slots[:3], 1):
+                    if isinstance(slot, dict) and 'start_time' in slot:
+                        start = slot['start_time']
+                        try:
+                            start_dt = datetime.fromisoformat(start) if isinstance(start, str) else start
+                            summary += f"  Slot {i}: {start_dt.strftime('%A, %B %d at %I:%M %p')}\n"
+                        except:
+                            summary += f"  Slot {i}: {start}\n"
+        
+        # Add conversation context if available
+        if hasattr(message, 'conversation_id') and message.conversation_id:
+            summary += f"• Conversation ID: {message.conversation_id}\n"
+        
+        # Add response requirement
+        if message.requires_response:
+            if hasattr(message, 'expires_at') and message.expires_at:
+                expire_time = message.expires_at.strftime('%B %d at %I:%M %p')
+                summary += f"• Response Needed: By {expire_time}\n"
+            else:
+                summary += "• Response Needed: Yes\n"
+        
+        return summary.strip()
+    
+    def _generate_threading_headers(self, message: CoordinationMessage, base_subject: str) -> Dict[str, str]:
+        """Generate email threading headers for conversation continuity"""
+        import socket
+        import time
+        
+        # Generate unique Message-ID for this message
+        timestamp = str(int(time.time() * 1000))  # milliseconds for uniqueness
+        hostname = socket.gethostname() or "localhost"
+        message_id = f"<coord-{message.conversation_id}-{message.message_id}-{timestamp}@{hostname}>"
+        
+        threading_headers = {
+            'message_id': message_id,
+            'subject': base_subject
+        }
+        
+        # Check if this is part of an existing conversation
+        conv_id = message.conversation_id
+        if conv_id in self.conversation_threading:
+            conv_info = self.conversation_threading[conv_id]
+            
+            # This is a reply in an existing conversation
+            if conv_info['message_ids']:
+                # Set In-Reply-To to the most recent message in the conversation
+                threading_headers['in_reply_to'] = conv_info['message_ids'][-1]
+                
+                # Set References to all previous messages in the conversation
+                threading_headers['references'] = ' '.join(conv_info['message_ids'])
+                
+                # Use consistent subject for the conversation thread
+                threading_headers['subject'] = conv_info['subject']
+            
+        else:
+            # This is the first message in a new conversation
+            # Extract meaningful subject from the coordination context
+            if hasattr(message, 'payload') and message.payload:
+                if 'meeting_context' in message.payload:
+                    ctx = message.payload['meeting_context']
+                    if isinstance(ctx, dict) and 'subject' in ctx:
+                        meeting_subject = ctx['subject']
+                        threading_headers['subject'] = f"{self.AGENT_SUBJECT_PREFIX} {meeting_subject}"
+            
+            # Initialize conversation threading info
+            self.conversation_threading[conv_id] = {
+                'message_ids': [],
+                'subject': threading_headers['subject'],
+                'participants': [self.agent_identity.user_email, message.to_agent_email],
+                'thread_id': None  # Will be set when first message is sent
+            }
+        
+        return threading_headers
+    
+    def _update_conversation_threading(self, message: CoordinationMessage, message_id: str, thread_id: str = None) -> None:
+        """Update conversation threading state with new message"""
+        conv_id = message.conversation_id
+        
+        if conv_id not in self.conversation_threading:
+            # Initialize if somehow missing
+            self.conversation_threading[conv_id] = {
+                'message_ids': [],
+                'subject': f"{self.AGENT_SUBJECT_PREFIX} Coordination",
+                'participants': [self.agent_identity.user_email, message.to_agent_email],
+                'thread_id': None
+            }
+        
+        # Add this message to the conversation thread
+        conv_info = self.conversation_threading[conv_id] 
+        conv_info['message_ids'].append(message_id)
+        
+        # Store thread_id when we get it (first message in conversation)
+        if thread_id and not conv_info['thread_id']:
+            conv_info['thread_id'] = thread_id
+            logger.info(f"Thread ID {thread_id} assigned to conversation {conv_id}")
+        
+        # Ensure participants are tracked
+        if message.to_agent_email not in conv_info['participants']:
+            conv_info['participants'].append(message.to_agent_email)
+        if self.agent_identity.user_email not in conv_info['participants']:
+            conv_info['participants'].append(self.agent_identity.user_email)
+        
+        # Keep threading history manageable (limit to last 10 messages)
+        if len(conv_info['message_ids']) > 10:
+            conv_info['message_ids'] = conv_info['message_ids'][-10:]
+        
+        logger.debug(f"Updated conversation {conv_id}: {len(conv_info['message_ids'])} messages")
+    
+    def _extract_message_id_from_email(self, gmail_message: Dict[str, Any]) -> Optional[str]:
+        """Extract Message-ID from received Gmail message for threading"""
+        try:
+            headers = gmail_message['payload'].get('headers', [])
+            for header in headers:
+                if header['name'].lower() == 'message-id':
+                    return header['value']
+        except Exception as e:
+            logger.warning(f"Could not extract Message-ID from email: {e}")
+        return None
+    
+    def _update_received_message_threading(self, conversation_id: str, message_id: str, from_email: str) -> None:
+        """Update conversation threading state when receiving a message"""
+        if conversation_id not in self.conversation_threading:
+            # Initialize new conversation thread
+            self.conversation_threading[conversation_id] = {
+                'message_ids': [],
+                'subject': f"{self.AGENT_SUBJECT_PREFIX} Coordination", 
+                'participants': [self.agent_identity.user_email],
+                'thread_id': None
+            }
+        
+        conv_info = self.conversation_threading[conversation_id]
+        
+        # Add the received message ID to the conversation thread
+        if message_id not in conv_info['message_ids']:
+            conv_info['message_ids'].append(message_id)
+        
+        # Add sender to participants if not already included
+        if from_email and from_email not in conv_info['participants']:
+            conv_info['participants'].append(from_email)
+        
+        # Keep threading history manageable
+        if len(conv_info['message_ids']) > 10:
+            conv_info['message_ids'] = conv_info['message_ids'][-10:]
+        
+        logger.debug(f"Updated conversation {conversation_id} with received message: {len(conv_info['message_ids'])} total")
+    
+    def get_conversation_thread_id(self, conversation_id: str) -> Optional[str]:
+        """Get Gmail thread ID for a conversation"""
+        conv_info = self.conversation_threading.get(conversation_id)
+        return conv_info['thread_id'] if conv_info else None
+    
+    def archive_conversation_thread(self, conversation_id: str) -> bool:
+        """Archive the Gmail thread for this conversation"""
+        thread_id = self.get_conversation_thread_id(conversation_id)
+        if not thread_id:
+            logger.warning(f"No thread ID found for conversation {conversation_id}")
+            return False
+        
+        try:
+            return self.gmail.archive_thread(thread_id)
+        except Exception as e:
+            logger.error(f"Error archiving conversation thread {conversation_id}: {e}")
+            return False
 
 # ==================== INTELLIGENT COORDINATION PROTOCOL ====================
 
@@ -462,7 +843,7 @@ class IntegratedCoordinationProtocol:
         return None
     
     def _handle_schedule_request(self, message: CoordinationMessage) -> Optional[CoordinationMessage]:
-        """Handle incoming schedule request"""
+        """Handle incoming schedule request - Step 2: Agent B replies with ALL available times"""
         
         logger.info(f"Processing schedule request from {message.from_agent.agent_id}")
         
@@ -477,8 +858,8 @@ class IntegratedCoordinationProtocol:
             meeting_context = MeetingContext(**context_data)
             time_preferences = message.payload.get("time_preferences", ["morning", "afternoon"])
             
-            # Find available times using calendar integration
-            proposed_times = self._find_intelligent_available_times(meeting_context, message.payload)
+            # Find ALL available times that match criteria (Step 2 of 3-step protocol)
+            proposed_times = self._find_all_available_times(meeting_context, message.payload)
             
             if proposed_times:
                 payload = {
@@ -524,7 +905,14 @@ class IntegratedCoordinationProtocol:
             return None
     
     def _handle_schedule_proposal(self, message: CoordinationMessage) -> Optional[CoordinationMessage]:
-        """Handle incoming schedule proposal"""
+        """Handle incoming schedule proposal with 3-step protocol
+        
+        Step 2: Agent B replies with ALL available times that match
+        Step 3: Agent A evaluates:
+          - One mutual time → Schedule + confirmation email
+          - Multiple mutual times → Propose one (may trigger counter-proposals)
+          - No mutual times → "No mutual window found" email
+        """
         
         logger.info(f"Processing schedule proposal from {message.from_agent.agent_id}")
         
@@ -532,16 +920,37 @@ class IntegratedCoordinationProtocol:
             proposed_times = [self._deserialize_timeslot(slot_data) 
                              for slot_data in message.payload["proposed_times"]]
             
-            # Evaluate proposals with contextual intelligence
-            best_option = self._evaluate_proposals_intelligently(proposed_times)
+            # Get original request context for finding ALL our available times
+            conversation = self.active_conversations.get(message.conversation_id, [])
+            original_request = self._find_original_request_in_conversation(conversation)
             
-            if best_option and best_option.confidence_score > 0.7:
-                # Accept the proposal
+            if not original_request:
+                logger.error("Cannot find original request in conversation")
+                return self._create_rejection_message(message, "Cannot find original scheduling context")
+            
+            meeting_context = MeetingContext(**original_request.payload["meeting_context"])
+            
+            # Find ALL our available times that match criteria
+            our_available_times = self._find_all_available_times(meeting_context, original_request.payload)
+            
+            # Find mutual times (intersection of their proposal and our availability)
+            mutual_times = self._find_mutual_availability(proposed_times, our_available_times)
+            
+            if len(mutual_times) == 0:
+                # No mutual times → "No mutual window found" email
+                logger.info("No mutual availability found")
+                return self._create_no_mutual_time_message(message, proposed_times, our_available_times)
+            
+            elif len(mutual_times) == 1:
+                # One mutual time → Schedule + confirmation email  
+                logger.info("Found exactly one mutual time - scheduling directly")
+                best_time = mutual_times[0]
                 payload = {
                     'proposal_message_id': message.message_id,
-                    'selected_time': self._serialize_timeslot(best_option),
-                    'confidence_score': best_option.confidence_score,
-                    'calendar_event_details': self._prepare_calendar_event_details(message, best_option)
+                    'selected_time': self._serialize_timeslot(best_time),
+                    'confidence_score': best_time.confidence_score,
+                    'calendar_event_details': self._prepare_calendar_event_details(message, best_time),
+                    'mutual_times_found': 1
                 }
                 
                 return CoordinationMessage(
@@ -555,30 +964,36 @@ class IntegratedCoordinationProtocol:
                     payload=payload,
                     requires_response=False
                 )
+            
             else:
-                # Send counter-proposal
-                counter_proposals = self._generate_counter_proposals(proposed_times)
+                # Multiple mutual times → Propose the best one (may trigger counter-proposals)
+                logger.info(f"Found {len(mutual_times)} mutual times - proposing best option")
+                best_time = max(mutual_times, key=lambda t: t.confidence_score)
                 
-                if counter_proposals:
-                    payload = {
-                        'original_proposal_id': message.message_id,
-                        'counter_proposals': [self._serialize_timeslot(slot) for slot in counter_proposals],
-                        'reasoning': 'Suggesting alternatives based on scheduling optimization'
-                    }
-                    
-                    return CoordinationMessage(
-                        message_id="",
-                        message_type=MessageType.SCHEDULE_COUNTER_PROPOSAL,
-                        from_agent=self.agent_identity,
-                        to_agent_email=message.from_agent.user_email,
-                        timestamp=datetime.now(),
-                        conversation_id=message.conversation_id,
-                        priority=message.priority,
-                        payload=payload
-                    )
+                payload = {
+                    'proposal_message_id': message.message_id,
+                    'selected_time': self._serialize_timeslot(best_time),
+                    'confidence_score': best_time.confidence_score,
+                    'calendar_event_details': self._prepare_calendar_event_details(message, best_time),
+                    'mutual_times_found': len(mutual_times),
+                    'alternative_times': [self._serialize_timeslot(t) for t in mutual_times[1:3]]  # Include 2 alternatives
+                }
+                
+                return CoordinationMessage(
+                    message_id="",
+                    message_type=MessageType.SCHEDULE_CONFIRMATION,
+                    from_agent=self.agent_identity,
+                    to_agent_email=message.from_agent.user_email,
+                    timestamp=datetime.now(),
+                    conversation_id=message.conversation_id,
+                    priority=message.priority,
+                    payload=payload,
+                    requires_response=False
+                )
                 
         except Exception as e:
             logger.error(f"Error handling schedule proposal: {e}")
+            return self._create_rejection_message(message, f"Error processing proposal: {str(e)}")
             
         return None
     
@@ -606,6 +1021,16 @@ class IntegratedCoordinationProtocol:
             if event_created:
                 logger.info(f"✅ Calendar event created successfully for {confirmed_time.start_time}")
                 logger.info(f"📧 Invites sent to: {event_details.get('attendees', [])}")
+                
+                # Archive the coordination email thread now that meeting is confirmed
+                try:
+                    archived = self.email_transport.archive_conversation_thread(message.conversation_id)
+                    if archived:
+                        logger.info(f"📁 Coordination thread archived for conversation {message.conversation_id}")
+                    else:
+                        logger.warning(f"⚠️ Could not archive coordination thread for conversation {message.conversation_id}")
+                except Exception as archive_error:
+                    logger.warning(f"⚠️ Archive failed but continuing: {archive_error}")
                 
                 # Send acknowledgment
                 payload = {
@@ -676,30 +1101,8 @@ class IntegratedCoordinationProtocol:
                                     if msg.message_type in [MessageType.SCHEDULE_PROPOSAL, 
                                                           MessageType.SCHEDULE_COUNTER_PROPOSAL]])
             
-            # Limit negotiation rounds to prevent infinite back-and-forth
-            if negotiation_rounds >= 4:  # Max 4 rounds of negotiation
-                logger.info("Maximum negotiation rounds reached, accepting best available option")
-                if best_option:
-                    # Force acceptance of best option
-                    payload = {
-                        'proposal_message_id': message.message_id,
-                        'selected_time': self._serialize_timeslot(best_option),
-                        'confidence_score': best_option.confidence_score,
-                        'calendar_event_details': self._prepare_calendar_event_details(message, best_option),
-                        'negotiation_complete': True
-                    }
-                    
-                    return CoordinationMessage(
-                        message_id="",
-                        message_type=MessageType.SCHEDULE_CONFIRMATION,
-                        from_agent=self.agent_identity,
-                        to_agent_email=message.from_agent.user_email,
-                        timestamp=datetime.now(),
-                        conversation_id=message.conversation_id,
-                        priority=message.priority,
-                        payload=payload,
-                        requires_response=False
-                    )
+            # Remove hardcoded negotiation limit - let natural termination handle it
+            # The system will naturally terminate when no more alternatives can be found
             
             # Normal counter-proposal evaluation
             if best_option and best_option.confidence_score > 0.6:  # Lower threshold for counter-proposals
@@ -834,12 +1237,66 @@ class IntegratedCoordinationProtocol:
                 slot.confidence_score = score
                 scored_slots.append(slot)
             
-            # Return top 3 slots
+            # Return top 3 slots for backwards compatibility
             scored_slots.sort(key=lambda x: x.confidence_score, reverse=True)
             return scored_slots[:3]
             
         except Exception as e:
             logger.error(f"Error finding intelligent available times: {e}")
+            return []
+    
+    def _find_all_available_times(self, meeting_context: MeetingContext, 
+                                request_payload: Dict[str, Any]) -> List[TimeSlot]:
+        """Find ALL available times that match criteria for 3-step protocol"""
+        
+        try:
+            # Get calendar events for analysis with proper timezone handling
+            now = datetime.now()
+            search_end = now + timedelta(days=7)
+            
+            # Use try-catch for calendar API to handle errors gracefully
+            existing_events = []
+            try:
+                existing_events = self.calendar_manager.get_events(
+                    time_min=now,
+                    time_max=search_end,
+                    max_results=50
+                )
+            except Exception as calendar_error:
+                logger.warning(f"Calendar API error (using empty events list): {calendar_error}")
+                existing_events = []
+            
+            # Generate ALL time slots that match criteria
+            slots = []
+            time_preferences = request_payload.get("time_preferences", ["morning", "afternoon"])
+            
+            for day_offset in range(1, 8):  # Next 7 days
+                target_date = now + timedelta(days=day_offset)
+                
+                # Skip weekends unless explicitly requested
+                if target_date.weekday() >= 5:
+                    continue
+                
+                # Generate slots based on preferences and context
+                daily_slots = self._generate_intelligent_daily_slots(
+                    target_date, meeting_context, time_preferences, existing_events
+                )
+                
+                slots.extend(daily_slots)
+            
+            # Score and rank ALL slots
+            scored_slots = []
+            for slot in slots:
+                score = self._calculate_contextual_score(slot, meeting_context)
+                slot.confidence_score = score
+                scored_slots.append(slot)
+            
+            # Return ALL available slots, sorted by score
+            scored_slots.sort(key=lambda x: x.confidence_score, reverse=True)
+            return scored_slots
+            
+        except Exception as e:
+            logger.error(f"Error finding all available times: {e}")
             return []
     
     def _generate_intelligent_daily_slots(self, target_date: datetime, meeting_context: MeetingContext,
@@ -1182,6 +1639,98 @@ class IntegratedCoordinationProtocol:
             if message.message_type == MessageType.SCHEDULE_REQUEST:
                 return message
         return None
+    
+    def _find_mutual_availability(self, proposed_times: List[TimeSlot], 
+                                our_available_times: List[TimeSlot]) -> List[TimeSlot]:
+        """Find mutual availability between proposed times and our availability"""
+        mutual_times = []
+        
+        for proposed_slot in proposed_times:
+            for our_slot in our_available_times:
+                # Check if times overlap significantly (allowing for small differences)
+                proposed_start = proposed_slot.start_time
+                proposed_end = proposed_slot.end_time
+                our_start = our_slot.start_time
+                our_end = our_slot.end_time
+                
+                # Allow 15-minute tolerance for small time differences
+                tolerance = timedelta(minutes=15)
+                
+                # Check if there's significant overlap
+                overlap_start = max(proposed_start, our_start)
+                overlap_end = min(proposed_end, our_end)
+                
+                if overlap_end > overlap_start:
+                    # There's overlap - check if it's substantial enough
+                    overlap_duration = overlap_end - overlap_start
+                    required_duration = proposed_end - proposed_start
+                    
+                    if overlap_duration >= required_duration - tolerance:
+                        # Use the more precise time (our time) with their duration
+                        mutual_slot = TimeSlot(
+                            start_time=our_start,
+                            end_time=our_start + (proposed_end - proposed_start),
+                            confidence_score=our_slot.confidence_score,
+                            conflicts=our_slot.conflicts,
+                            context_score=our_slot.context_score
+                        )
+                        mutual_times.append(mutual_slot)
+                        break  # Found a match for this proposed time
+        
+        # Remove duplicates and sort by confidence score
+        seen_times = set()
+        unique_mutual_times = []
+        
+        for slot in mutual_times:
+            time_key = (slot.start_time, slot.end_time)
+            if time_key not in seen_times:
+                seen_times.add(time_key)
+                unique_mutual_times.append(slot)
+        
+        unique_mutual_times.sort(key=lambda x: x.confidence_score, reverse=True)
+        return unique_mutual_times
+    
+    def _create_no_mutual_time_message(self, original_message: CoordinationMessage, 
+                                     proposed_times: List[TimeSlot], 
+                                     our_available_times: List[TimeSlot]) -> CoordinationMessage:
+        """Create a 'no mutual window found' message with alternatives"""
+        
+        # Provide summary of what was attempted
+        proposed_summary = []
+        for i, slot in enumerate(proposed_times[:3], 1):
+            time_str = slot.start_time.strftime('%A, %B %d at %I:%M %p')
+            proposed_summary.append(f"Option {i}: {time_str}")
+        
+        our_summary = []
+        for i, slot in enumerate(our_available_times[:3], 1):
+            time_str = slot.start_time.strftime('%A, %B %d at %I:%M %p')
+            our_summary.append(f"Available {i}: {time_str}")
+        
+        payload = {
+            'original_message_id': original_message.message_id,
+            'reason': 'No mutual window found',
+            'coordination_status': 'no_mutual_availability',
+            'their_proposed_times': proposed_summary,
+            'our_available_times': our_summary,
+            'alternative_suggestions': [
+                "Consider extending the meeting timeframe to next week",
+                "Try different time preferences (morning/afternoon/evening)",
+                "Consider a shorter meeting duration",
+                "Schedule multiple shorter sessions instead"
+            ]
+        }
+        
+        return CoordinationMessage(
+            message_id="",
+            message_type=MessageType.SCHEDULE_REJECTION,
+            from_agent=self.agent_identity,
+            to_agent_email=original_message.from_agent.user_email,
+            timestamp=datetime.now(),
+            conversation_id=original_message.conversation_id,
+            priority=original_message.priority,
+            payload=payload,
+            requires_response=False
+        )
     
     def _create_rejection_message(self, original_message: CoordinationMessage, reason: str) -> CoordinationMessage:
         """Create a rejection message"""

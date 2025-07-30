@@ -1,27 +1,48 @@
-# Google Calendar Scheduler
+# Empire Familiar - Agent Calendar Coordination System
 
-A natural language interface for Google Calendar that allows Claude Code to schedule and manage calendar events using conversational commands.
+An intelligent agent-to-agent calendar coordination system that enables Claude Code agents to automatically negotiate and schedule meetings via email communication.
 
-## Features
+## ✅ Current Features
 
-- **Natural Language Scheduling**: Create events using natural language descriptions
-- **Smart Time Parsing**: Understands relative dates like "tomorrow", "next Tuesday", "next week"
-- **Event Management**: Create, view, update, and delete calendar events
-- **Free Time Finding**: Automatically find available time slots in your calendar
-- **Conflict Detection**: Avoid scheduling conflicts by checking existing events
-- **Multiple Calendars**: Support for accessing multiple Google calendars
+### **Agent Coordination Protocol**
+- **Natural Language Negotiations**: Agents communicate in clear, human-readable English instead of machine code
+- **Email Threading**: All coordination happens in Gmail reply threads for organized conversation flow
+- **Automatic Archiving**: Coordination emails are automatically archived after successful meeting confirmation
+- **3-Step Simplified Protocol**: Request → All availabilities → Mutual selection or counter-proposals
+- **Intelligent Scheduling**: Calendar conflict detection, time preferences, and context-aware suggestions
+
+### **Multi-Service Integration**
+- **Google Calendar**: Full calendar management and event creation
+- **Gmail**: Email-based coordination with threading and archiving
+- **Google Docs**: Document creation and sharing capabilities
+- **Google Tasks**: Task management and deadline tracking
+
+### **Smart Coordination**
+- **Conflict Detection**: Real-time calendar checking to avoid scheduling conflicts
+- **Time Preferences**: Respects morning/afternoon preferences and constraints
+- **Context Awareness**: Considers workload, urgency, and meeting types
+- **Multi-Round Negotiation**: Intelligent counter-proposals when initial times don't work
+- **Graceful Error Handling**: Continues coordination even if some operations fail
 
 ## Project Structure
 
 ```
-google-calendar-scheduler/
-├── main.py                 # Main natural language interface
-├── calendar_functions.py   # Core calendar operations
-├── auth.py                 # OAuth authentication handling
-├── requirements.txt        # Python dependencies
-├── credentials.json        # Your OAuth credentials (you provide)
-├── token.json             # Generated OAuth token (auto-created)
-└── README.md              # This file
+empire-familiar/
+├── integrated_agent_coordination.py  # Core agent coordination system
+├── gmail_functions.py               # Gmail operations with threading
+├── calendar_functions.py            # Google Calendar API operations  
+├── docs_functions.py                # Google Docs integration
+├── tasks_functions.py               # Google Tasks management
+├── coordination_helpers.py          # Easy-to-use helper functions
+├── agent_email_monitor.py          # Background email monitoring
+├── auth.py                         # OAuth authentication handling
+├── main.py                         # Simple calendar interface
+├── integrated_assistant.py         # Multi-service assistant
+├── requirements.txt                # Python dependencies
+├── credentials.json                # OAuth credentials (you provide)
+├── token.json                     # Generated OAuth token (auto-created)
+├── CLAUDE.md                      # Claude Code integration instructions
+└── README.md                      # This file
 ```
 
 ## Setup Instructions
@@ -50,7 +71,8 @@ google-calendar-scheduler/
 ### 3. Install Dependencies
 
 ```bash
-cd google-calendar-scheduler
+cd empire-familiar
+source calendar_env/bin/activate  # Activate virtual environment
 pip install -r requirements.txt
 ```
 
@@ -69,26 +91,51 @@ This will:
 
 ## Usage with Claude Code
 
-### Basic Setup
+### Agent Coordination Setup
+
+```python
+from integrated_agent_coordination import initialize_integrated_coordination_system
+from coordination_helpers import setup_coordination_for_user, schedule_meeting_with_agent
+
+# Setup your agent identity
+setup_coordination_for_user("Your Name", "your@email.com")
+
+# Initialize the coordination system
+coordinator = initialize_integrated_coordination_system()
+```
+
+### Agent-to-Agent Meeting Coordination
+
+```python
+# Schedule meeting with another agent
+from coordination_helpers import schedule_meeting_with_agent
+
+result = schedule_meeting_with_agent(
+    target_email="colleague@company.com",
+    meeting_subject="Project Planning Meeting", 
+    duration_minutes=60,
+    urgency="high"
+)
+
+# Quick 15-minute sync
+from coordination_helpers import quick_15min_sync
+quick_15min_sync("team@company.com", "Daily Standup")
+
+# Urgent meeting
+from coordination_helpers import urgent_meeting
+urgent_meeting("manager@company.com", "Critical Issue", 45)
+```
+
+### Basic Calendar Operations
 
 ```python
 from main import CalendarScheduler
 
-# Initialize the scheduler
+# Initialize the simple scheduler
 scheduler = CalendarScheduler()
-```
 
-### Scheduling Events
-
-```python
-# Schedule a meeting
+# Schedule a meeting manually
 event = scheduler.schedule_event("Schedule a team meeting tomorrow at 2 PM for 1 hour")
-
-# Book an appointment
-event = scheduler.schedule_event("Book a doctor appointment next Tuesday at 10:30 AM")
-
-# Create a lunch meeting
-event = scheduler.schedule_event("Create a lunch meeting with John on Friday at noon")
 ```
 
 ### Viewing Your Schedule
@@ -231,14 +278,53 @@ python calendar_functions.py
 python main.py
 ```
 
-## 🚀 Feature Requests & Roadmap
+## 🤖 Agent Coordination in Action
 
-We welcome feature suggestions from team members! Check out our [Feature Requests & Roadmap](FEATURE_REQUESTS.md) to see what's planned and how to suggest new features.
+### Email Monitoring for Auto-Response
 
-### Quick Links:
-- 📋 [Current Feature Roadmap](FEATURE_REQUESTS.md) - See what's planned for development
-- 💡 [Suggest a Feature](https://github.com/ZachSchlosser/google-calendar-scheduler/issues/new?template=feature_request.md) - Use our feature request template
-- 🤝 [Contributing Guidelines](CONTRIBUTING.md) - Learn how to contribute to the project
+```bash
+# Start monitoring for incoming coordination requests (continuous)
+python3 agent_email_monitor.py monitor 0
+
+# Monitor for 2 hours
+python3 agent_email_monitor.py monitor 120
+
+# Quick check for new messages
+python3 agent_email_monitor.py quick
+```
+
+### Multi-Service Integration
+
+```python
+from integrated_assistant import IntegratedGoogleAssistant
+
+# Initialize full service integration
+assistant = IntegratedGoogleAssistant()
+
+# Calendar operations
+assistant.schedule_event("Team standup tomorrow at 9 AM")
+assistant.get_schedule("today")
+
+# Email operations
+assistant.get_unread_emails(5)
+assistant.send_email("colleague@company.com", "Meeting Follow-up", "Thanks for the meeting!")
+
+# Document operations
+assistant.create_document("Meeting Notes", "Discussion points...")
+
+# Task management
+assistant.create_task("Review project proposal", due_date="Friday")
+```
+
+## 🔄 How Agent Coordination Works
+
+1. **Agent A** sends coordination request via email to **Agent B**
+2. **Agent B** automatically processes request and responds with available times
+3. **Negotiation** continues until mutual time is found or alternatives exhausted
+4. **Calendar events** created automatically for both agents when confirmed
+5. **Email thread** automatically archived to keep inboxes clean
+
+All coordination happens in clear, human-readable language that can be easily followed and understood.
 
 ## Contributing
 

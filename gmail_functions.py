@@ -89,18 +89,22 @@ class GmailManager:
         
         return formatted_messages
     
-    def send_email(self, to_email, subject, body, html_body=None):
+    def send_email(self, to_email, subject, body, html_body=None, threading_headers=None):
         """
-        Send an email.
+        Send an email with optional threading headers for conversation threading.
         
         Args:
             to_email (str): Recipient email address
             subject (str): Email subject
             body (str): Plain text body
             html_body (str): HTML body (optional)
+            threading_headers (dict): Threading headers with keys:
+                - message_id (str): Message-ID for this email
+                - in_reply_to (str): In-Reply-To header for replies
+                - references (str): References header for full thread chain
         
         Returns:
-            dict: Sent message information or None if failed
+            dict: Sent message information with message_id or None if failed
         """
         try:
             # Create message
@@ -124,6 +128,17 @@ class GmailManager:
             except:
                 pass  # Let Gmail use default if profile fetch fails
             
+            # Add threading headers for email conversation threading
+            if threading_headers:
+                if 'message_id' in threading_headers and threading_headers['message_id']:
+                    message['Message-ID'] = threading_headers['message_id']
+                
+                if 'in_reply_to' in threading_headers and threading_headers['in_reply_to']:
+                    message['In-Reply-To'] = threading_headers['in_reply_to']
+                
+                if 'references' in threading_headers and threading_headers['references']:
+                    message['References'] = threading_headers['references']
+            
             # Encode message
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
             
@@ -133,7 +148,15 @@ class GmailManager:
                 body={'raw': raw_message}
             ).execute()
             
+            # Add the message_id to the response for threading purposes
+            if sent_message and threading_headers and 'message_id' in threading_headers:
+                sent_message['custom_message_id'] = threading_headers['message_id']
+            
             print(f"Email sent successfully to {to_email}")
+            if threading_headers:
+                print(f"  Threading headers: Message-ID={threading_headers.get('message_id', 'None')}")
+                print(f"  In-Reply-To={threading_headers.get('in_reply_to', 'None')}")
+            
             return sent_message
         
         except HttpError as e:
@@ -142,6 +165,59 @@ class GmailManager:
         except Exception as e:
             print(f"Error sending email: {e}")
             return None
+    
+    def archive_thread(self, thread_id):
+        """
+        Archive an entire email thread by removing INBOX label from all messages in the thread.
+        
+        Args:
+            thread_id (str): Gmail thread ID to archive
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Get all messages in the thread
+            thread = self.service.users().threads().get(
+                userId='me',
+                id=thread_id
+            ).execute()
+            
+            messages = thread.get('messages', [])
+            if not messages:
+                print(f"No messages found in thread {thread_id}")
+                return False
+            
+            # Archive each message in the thread by removing INBOX label
+            archived_count = 0
+            for message in messages:
+                message_id = message['id']
+                
+                # Check if message has INBOX label
+                current_labels = message.get('labelIds', [])
+                if 'INBOX' in current_labels:
+                    # Remove INBOX label to archive the message
+                    modify_request = {
+                        'removeLabelIds': ['INBOX']
+                    }
+                    
+                    self.service.users().messages().modify(
+                        userId='me',
+                        id=message_id,
+                        body=modify_request
+                    ).execute()
+                    
+                    archived_count += 1
+            
+            print(f"✅ Archived thread {thread_id} ({archived_count} messages)")
+            return True
+            
+        except HttpError as e:
+            print(f"HTTP Error archiving thread {thread_id}: {e}")
+            return False
+        except Exception as e:
+            print(f"Error archiving thread {thread_id}: {e}")
+            return False
     
     def reply_to_message(self, message_id, reply_body):
         """

@@ -4,11 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an integrated Google services system that allows Claude Code to act as a natural language assistant for Google Calendar, Gmail, and Google Docs. The system directly integrates with Google APIs without requiring MCP servers.
+**Empire Familiar** is an intelligent agent-to-agent calendar coordination system that enables Claude Code agents to automatically negotiate and schedule meetings via email communication. The system integrates with multiple Google services and implements sophisticated coordination protocols.
+
+**✅ Current Implemented Features:**
+- 🤖 **Agent-to-Agent Coordination** - Automatic meeting negotiation between Claude agents
+- 📧 **Gmail Email Threading** - Coordination conversations happen in organized email threads
+- 📁 **Automatic Archiving** - Email threads archive automatically after successful scheduling
+- 🎯 **3-Step Protocol** - Simplified coordination: Request → Availabilities → Selection
+- 🧠 **Natural Language** - Human-readable coordination messages instead of machine code
+- ⚡ **Real-time Processing** - Background email monitoring and auto-response
 
 **Available Services:**
-- 📅 **Google Calendar** - Schedule events, view calendar, find free time
-- 📧 **Gmail** - Read emails, send messages, search mail  
+- 📅 **Google Calendar** - Schedule events, view calendar, find free time, conflict detection
+- 📧 **Gmail** - Read emails, send messages, threading, archiving, search mail  
 - 📄 **Google Docs** - Create documents, edit content, share docs
 - ✅ **Google Tasks** - Create tasks, manage todo lists, track deadlines
 
@@ -21,16 +29,31 @@ source calendar_env/bin/activate
 ```
 
 ### Key Files
-- `integrated_assistant.py` - **Primary interface** with all Google services
-- `main.py` - Calendar-only interface (CalendarScheduler class)
-- `gmail_functions.py` - Gmail operations (GmailManager class)
-- `docs_functions.py` - Google Docs operations (DocsManager class)
+- `integrated_agent_coordination.py` - **Core agent coordination system** with email threading and protocols
+- `coordination_helpers.py` - **Easy-to-use functions** for agent coordination 
+- `agent_email_monitor.py` - **Background monitoring** for automatic email processing
+- `gmail_functions.py` - Gmail operations with threading and archiving (GmailManager class)
+- `integrated_assistant.py` - Multi-service interface with all Google services
 - `calendar_functions.py` - Core Google Calendar API operations
+- `docs_functions.py` - Google Docs operations (DocsManager class)  
+- `tasks_functions.py` - Google Tasks operations
+- `main.py` - Simple calendar-only interface (CalendarScheduler class)
 - `auth.py` - OAuth authentication handling
 - `credentials.json` - OAuth credentials (already configured)
 - `token.json` - OAuth access token (auto-generated)
 
-### Running the Integrated Assistant
+### Running Agent Coordination
+```python
+from coordination_helpers import setup_coordination_for_user, schedule_meeting_with_agent
+
+# Setup your agent identity
+setup_coordination_for_user("Your Name", "your@email.com")
+
+# Schedule with another agent
+schedule_meeting_with_agent("colleague@company.com", "Project Meeting", 60)
+```
+
+### Running the Integrated Assistant  
 ```python
 from integrated_assistant import IntegratedGoogleAssistant
 assistant = IntegratedGoogleAssistant()
@@ -44,6 +67,14 @@ assistant = IntegratedGoogleAssistant()
 3. **Stranger**: Ask permission before allowing someone to schedule who has not scheduled with me before.
 
 ### Primary Functions
+
+**🤖 Agent Coordination Operations:**
+1. **Agent Setup**: `setup_coordination_for_user("Your Name", "your@email.com")`
+2. **Schedule with Agent**: `schedule_meeting_with_agent(target_email, subject, duration_minutes)`
+3. **Quick Sync**: `quick_15min_sync(email, subject)`
+4. **Urgent Meeting**: `urgent_meeting(email, subject, duration_minutes)`
+5. **Check Messages**: `check_and_respond_to_coordination()`
+6. **Monitor Email**: `python3 agent_email_monitor.py monitor 120` (command line)
 
 **📅 Calendar Operations:**
 1. **Event Creation**: `assistant.schedule_event(description)`
@@ -207,10 +238,21 @@ else:
     print("No 1-hour slots available this week")
 ```
 
-## Agent-to-Agent Coordination (NEW)
+## ✅ Agent-to-Agent Coordination (IMPLEMENTED)
+
+### Current Implementation Status
+The coordination system is **fully implemented and operational** with the following features:
+
+**🎯 Core Features Complete:**
+- ✅ **Natural Language Messages** - Human-readable coordination instead of machine code
+- ✅ **Email Threading** - All coordination in Gmail reply threads  
+- ✅ **Auto-Archiving** - Threads archived after successful meeting confirmation
+- ✅ **3-Step Protocol** - Simplified coordination flow without artificial limits
+- ✅ **Intelligent Scheduling** - Calendar conflicts, preferences, context awareness
+- ✅ **Real-time Processing** - Background email monitoring and auto-response
 
 ### Universal Coordination System
-The system now supports **email-agnostic agent coordination** with any Claude Code agent:
+The system supports **email-agnostic agent coordination** with any Claude Code agent:
 
 **Setup your agent identity:**
 ```python
