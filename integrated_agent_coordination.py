@@ -1544,15 +1544,284 @@ class IntegratedCoordinationProtocol:
         if this_agent_email not in attendees:
             attendees.append(this_agent_email)
         
+        # Generate enhanced title and description
+        enhanced_title = self._generate_enhanced_title(meeting_context, attendees, conversation)
+        enhanced_description = self._generate_enhanced_description(meeting_context, attendees, conversation, selected_time)
+        
         return {
-            "summary": meeting_context.subject,
-            "description": f"{meeting_context.description or ''}\n\nCoordinated by Claude Code agents",
+            "summary": enhanced_title,
+            "description": enhanced_description,
             "start_time": selected_time.start_time.isoformat(),
             "end_time": selected_time.end_time.isoformat(),
             "attendees": attendees,
             "coordinated_by_agents": True,
             "coordination_confidence": selected_time.confidence_score
         }
+    
+    def _generate_enhanced_title(self, meeting_context: MeetingContext, 
+                               attendees: List[str], conversation: List[CoordinationMessage]) -> str:
+        """Generate intelligent title with participants and meeting type"""
+        
+        base_title = meeting_context.subject or "Agent Coordinated Meeting"
+        
+        # Extract participant names (remove domain from email)
+        participant_names = []
+        for email in attendees:
+            if email != self.agent_identity.user_email:  # Exclude self
+                name = email.split('@')[0].replace('.', ' ').title()
+                participant_names.append(name)
+        
+        # Format meeting type for display
+        meeting_type_display = meeting_context.meeting_type.replace('_', ' ').title()
+        
+        # Build enhanced title: [Subject] | [Participants] | [Type]
+        title_parts = [base_title]
+        
+        if participant_names:
+            if len(participant_names) == 1:
+                title_parts.append(participant_names[0])
+            elif len(participant_names) == 2:
+                title_parts.append(f"{participant_names[0]} & {participant_names[1]}")
+            else:
+                title_parts.append(f"{participant_names[0]} + {len(participant_names)-1} others")
+        
+        if meeting_type_display and meeting_type_display != "Coordination Meeting":
+            title_parts.append(meeting_type_display)
+        
+        return " | ".join(title_parts)
+    
+    def _generate_enhanced_description(self, meeting_context: MeetingContext, 
+                                     attendees: List[str], conversation: List[CoordinationMessage],
+                                     selected_time: TimeSlot) -> str:
+        """Generate rich context description for calendar event"""
+        
+        description_parts = []
+        
+        # Meeting Details Section
+        description_parts.append("📋 MEETING DETAILS")
+        
+        if meeting_context.description:
+            description_parts.append(f"• Purpose: {meeting_context.description}")
+        
+        meeting_type_display = meeting_context.meeting_type.replace('_', ' ').title()
+        description_parts.append(f"• Type: {meeting_type_display}")
+        
+        if hasattr(meeting_context, 'requires_preparation') and meeting_context.requires_preparation:
+            description_parts.append("• Preparation Required: Yes")
+        
+        description_parts.append("")  # Empty line
+        
+        # Participants Section
+        description_parts.append("👥 PARTICIPANTS")
+        for email in attendees:
+            if email == self.agent_identity.user_email:
+                name = self.agent_identity.user_name
+                description_parts.append(f"• {name} ({email})")
+            else:
+                name = email.split('@')[0].replace('.', ' ').title()
+                description_parts.append(f"• {name} ({email})")
+        
+        description_parts.append("")  # Empty line
+        
+        # Coordination Summary Section
+        description_parts.append("📅 COORDINATION SUMMARY")
+        description_parts.append("• Scheduled via: Agent coordination")
+        
+        # Count alternative times considered
+        alternatives_count = self._count_alternatives_from_conversation(conversation)
+        if alternatives_count > 1:
+            description_parts.append(f"• Alternative times considered: {alternatives_count} options")
+        
+        description_parts.append("")  # Empty line
+        
+        # Relevant Links & Resources Section
+        description_parts.append("📎 RELEVANT LINKS & RESOURCES")
+        document_links = self._extract_document_links(conversation)
+        
+        if document_links:
+            for link in document_links:
+                description_parts.append(f"• Related document: {link}")
+        else:
+            description_parts.append("• No documents referenced in coordination")
+        
+        # Project context detection
+        project_context = self._detect_project_context(conversation)
+        if project_context:
+            description_parts.append(f"• Project context: {project_context}")
+        
+        description_parts.append("")  # Empty line
+        
+        # Next Steps Section
+        description_parts.append("🎯 NEXT STEPS")
+        agenda_items = self._extract_agenda_items(conversation)
+        
+        if agenda_items:
+            for item in agenda_items:
+                description_parts.append(f"• {item}")
+        else:
+            description_parts.append("• Meeting agenda to be confirmed")
+        
+        preparation_items = self._suggest_preparation_items(meeting_context)
+        if preparation_items:
+            description_parts.append("• Pre-meeting preparation:")
+            for prep in preparation_items:
+                description_parts.append(f"  - {prep}")
+        
+        description_parts.append("")  # Empty line
+        description_parts.append("---")
+        description_parts.append("🤖 Coordinated by Claude Code agents")
+        
+        return "\n".join(description_parts)
+    
+    def _count_alternatives_from_conversation(self, conversation: List[CoordinationMessage]) -> int:
+        """Count how many alternative times were considered during coordination"""
+        alternatives = 0
+        
+        for msg in conversation:
+            if msg.message_type == MessageType.SCHEDULE_PROPOSAL:
+                if 'proposed_times' in msg.payload:
+                    alternatives += len(msg.payload['proposed_times'])
+            elif msg.message_type == MessageType.SCHEDULE_COUNTER_PROPOSAL:
+                if 'counter_proposals' in msg.payload:
+                    alternatives += len(msg.payload['counter_proposals'])
+        
+        return max(alternatives, 1)  # At least 1 option was considered
+    
+    def _extract_document_links(self, conversation: List[CoordinationMessage]) -> List[str]:
+        """Extract Google Docs/Drive links from coordination messages"""
+        links = []
+        
+        # Common Google service URL patterns
+        google_patterns = [
+            r'https://docs\.google\.com/[^\s]+',
+            r'https://drive\.google\.com/[^\s]+',
+            r'https://sheets\.google\.com/[^\s]+',
+            r'https://slides\.google\.com/[^\s]+'
+        ]
+        
+        import re
+        
+        for msg in conversation:
+            # Check message payload for links
+            for key, value in msg.payload.items():
+                if isinstance(value, str):
+                    for pattern in google_patterns:
+                        found_links = re.findall(pattern, value)
+                        links.extend(found_links)
+                elif isinstance(value, dict):
+                    # Check nested dictionary values
+                    for nested_key, nested_value in value.items():
+                        if isinstance(nested_value, str):
+                            for pattern in google_patterns:
+                                found_links = re.findall(pattern, nested_value)
+                                links.extend(found_links)
+        
+        # Remove duplicates and return up to 3 links
+        unique_links = list(set(links))
+        return unique_links[:3]
+    
+    def _detect_project_context(self, conversation: List[CoordinationMessage]) -> str:
+        """Detect project keywords and context from coordination messages"""
+        
+        # Common project-related keywords to look for
+        project_keywords = [
+            'project', 'initiative', 'campaign', 'program', 'roadmap',
+            'sprint', 'milestone', 'deliverable', 'launch', 'release',
+            'planning', 'strategy', 'review', 'retrospective', 'standup'
+        ]
+        
+        context_words = []
+        
+        for msg in conversation:
+            # Check subject and description
+            if hasattr(msg, 'payload') and 'meeting_context' in msg.payload:
+                context = msg.payload['meeting_context']
+                
+                subject = context.get('subject', '').lower()
+                description = context.get('description', '').lower()
+                
+                for keyword in project_keywords:
+                    if keyword in subject or keyword in description:
+                        # Extract surrounding context
+                        if keyword in subject:
+                            context_words.append(subject.split(keyword)[0].strip().split()[-2:] + 
+                                               [keyword] + 
+                                               subject.split(keyword)[1].strip().split()[:2])
+                        break
+        
+        if context_words and context_words[0]:
+            # Clean and return the most relevant context
+            context_phrase = ' '.join([word for word in context_words[0] if word])
+            return context_phrase.title()[:50]  # Limit length
+        
+        return ""
+    
+    def _extract_agenda_items(self, conversation: List[CoordinationMessage]) -> List[str]:
+        """Extract potential agenda items from coordination messages"""
+        agenda_items = []
+        
+        # Look for agenda-related keywords and patterns
+        agenda_patterns = [
+            r'agenda[:\s]+([^\n]+)',
+            r'discuss[:\s]+([^\n]+)', 
+            r'review[:\s]+([^\n]+)',
+            r'plan[:\s]+([^\n]+)',
+            r'topics?[:\s]+([^\n]+)'
+        ]
+        
+        import re
+        
+        for msg in conversation:
+            if hasattr(msg, 'payload') and 'meeting_context' in msg.payload:
+                context = msg.payload['meeting_context']
+                description = context.get('description', '')
+                
+                for pattern in agenda_patterns:
+                    matches = re.findall(pattern, description, re.IGNORECASE)
+                    for match in matches:
+                        if match.strip():
+                            agenda_items.append(match.strip())
+        
+        return agenda_items[:3]  # Limit to 3 agenda items
+    
+    def _suggest_preparation_items(self, meeting_context: MeetingContext) -> List[str]:
+        """Suggest preparation items based on meeting type and context"""
+        preparations = []
+        
+        meeting_type = meeting_context.meeting_type.lower()
+        
+        # Type-based preparation suggestions
+        if 'planning' in meeting_type or 'strategy' in meeting_type:
+            preparations.extend([
+                "Review previous planning documents",
+                "Prepare status updates on current initiatives"
+            ])
+        elif 'review' in meeting_type or 'retrospective' in meeting_type:
+            preparations.extend([
+                "Gather performance metrics and outcomes",
+                "Prepare feedback and improvement suggestions"
+            ])
+        elif '1:1' in meeting_type or 'one_on_one' in meeting_type:
+            preparations.extend([
+                "Prepare personal updates and questions",
+                "Review previous conversation notes"
+            ])
+        elif 'standup' in meeting_type or 'sync' in meeting_type:
+            preparations.extend([
+                "Prepare brief status update",
+                "Note any blockers or help needed"
+            ])
+        elif 'client' in meeting_type or 'external' in meeting_type:
+            preparations.extend([
+                "Review client background and history",
+                "Prepare relevant materials and presentations"
+            ])
+        
+        # Urgency-based suggestions
+        if meeting_context.urgency == Priority.HIGH:
+            preparations.append("Gather all relevant materials - high priority meeting")
+        
+        return preparations[:3]  # Limit to 3 preparation items
     
     def _create_confirmed_calendar_event(self, confirmed_time: TimeSlot, 
                                        event_details: Dict[str, Any]) -> bool:
