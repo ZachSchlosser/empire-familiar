@@ -239,9 +239,9 @@ class GmailManager:
             
             # Extract headers
             headers = original_msg['payload'].get('headers', [])
-            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
-            from_email = next((h['value'] for h in headers if h['name'] == 'From'), '')
-            to_email = next((h['value'] for h in headers if h['name'] == 'To'), '')
+            subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'No Subject')
+            from_email = next((h['value'] for h in headers if h['name'].lower() == 'from'), '')
+            to_email = next((h['value'] for h in headers if h['name'].lower() == 'to'), '')
             
             # Create reply
             reply_subject = f"Re: {subject}" if not subject.startswith('Re:') else subject
@@ -271,9 +271,9 @@ class GmailManager:
             headers = message['payload'].get('headers', [])
             
             # Extract key information
-            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
-            from_email = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown Sender')
-            date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown Date')
+            subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'No Subject')
+            from_email = next((h['value'] for h in headers if h['name'].lower() == 'from'), 'Unknown Sender')
+            date = next((h['value'] for h in headers if h['name'].lower() == 'date'), 'Unknown Date')
             
             # Extract body
             body = self.extract_message_body(message['payload'])
