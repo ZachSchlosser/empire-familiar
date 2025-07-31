@@ -17,14 +17,12 @@ def demonstrate_new_format():
     print("-" * 30)
     request_example = """MEETING REQUEST
 • From: John Smith's Assistant
-• Priority: HIGH
 • Sent: January 29, 2025 at 02:30 PM
 • Meeting: Q1 Planning Session
 • Duration: 60 minutes
 • Participants: john@example.com, sarah@example.com  
 • Description: Quarterly planning meeting to review goals and priorities
 • Type: team_meeting
-• Urgency: high
 • Preferred Times: Tuesday mornings, Wednesday afternoons
 • Constraints: No meetings after 4 PM
 • Response Needed: By January 30 at 02:30 PM
@@ -44,7 +42,6 @@ Protocol: 2.0"""
     print("-" * 30)
     proposal_example = """MEETING PROPOSAL
 • From: Sarah Chen's Assistant
-• Priority: HIGH
 • Sent: January 29, 2025 at 03:15 PM
 • Available Options: 3 time slots
   Option 1: Tuesday, January 30 at 10:00 AM - 11:00 AM
@@ -68,7 +65,6 @@ Protocol: 2.0"""
     print("-" * 30)
     confirmation_example = """MEETING CONFIRMED
 • From: John Smith's Assistant
-• Priority: HIGH
 • Sent: January 29, 2025 at 04:00 PM
 • Confirmed Time: Wednesday, January 31 at 02:30 PM
 • Location: Conference Room A
@@ -90,7 +86,6 @@ Protocol: 2.0"""
     print("-" * 30)
     rejection_example = """REQUEST DECLINED
 • From: Sarah Chen's Assistant
-• Priority: MEDIUM
 • Sent: January 29, 2025 at 03:45 PM
 • Reason: All proposed times conflict with existing meetings
 • Suggestion: Would Thursday morning or Friday afternoon work better?

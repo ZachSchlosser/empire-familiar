@@ -269,8 +269,7 @@ from coordination_helpers import schedule_meeting_with_agent
 schedule_meeting_with_agent(
     target_email="colleague@company.com",
     meeting_subject="Project Planning", 
-    duration_minutes=60,
-    urgency="high"
+    duration_minutes=60
 )
 ```
 

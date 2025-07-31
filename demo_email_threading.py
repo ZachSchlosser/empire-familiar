@@ -34,7 +34,6 @@ def demo_email_threading():
         target_agent_email=target_email,
         meeting_subject="Demo Threading Conversation",
         duration_minutes=45,
-        urgency="medium",
         meeting_type="demo_meeting"
     )
     
@@ -70,7 +69,7 @@ def demo_email_threading():
     print("\n🔗 Threading Headers Example:")
     if transport.conversation_threading:
         # Generate headers for a hypothetical reply
-        from integrated_agent_coordination import CoordinationMessage, MessageType, Priority
+        from integrated_agent_coordination import CoordinationMessage, MessageType
         
         test_message = CoordinationMessage(
             message_id="demo_reply_123",
@@ -79,7 +78,6 @@ def demo_email_threading():
             to_agent_email=target_email,
             timestamp=datetime.now(),
             conversation_id=conv_id,
-            priority=Priority.MEDIUM,
             payload={'demo': 'reply'}
         )
         

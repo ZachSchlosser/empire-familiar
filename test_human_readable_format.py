@@ -42,7 +42,6 @@ def test_human_readable_format():
     
     meeting_context = MeetingContext(
         meeting_type="team_meeting",
-        urgency=Priority.HIGH,
         duration_minutes=60,
         attendees=["john@example.com", "sarah@example.com"],
         subject="Q1 Planning Session",
@@ -57,15 +56,13 @@ def test_human_readable_format():
         to_agent_email="sarah@example.com",
         timestamp=datetime.now(),
         conversation_id="conv_001",
-        priority=Priority.HIGH,
         payload={
             'meeting_context': {
                 'subject': meeting_context.subject,
                 'duration_minutes': meeting_context.duration_minutes,
                 'attendees': meeting_context.attendees,
                 'description': meeting_context.description,
-                'meeting_type': meeting_context.meeting_type,
-                'urgency': meeting_context.urgency.value
+                'meeting_type': meeting_context.meeting_type
             },
             'preferences': {
                 'preferred_times': ['Tuesday mornings', 'Wednesday afternoons'],
@@ -92,7 +89,6 @@ def test_human_readable_format():
         to_agent_email="john@example.com",
         timestamp=datetime.now(),
         conversation_id="conv_001",
-        priority=Priority.HIGH,
         payload={
             'proposed_times': [
                 {
@@ -131,7 +127,6 @@ def test_human_readable_format():
         to_agent_email="sarah@example.com",
         timestamp=datetime.now(),
         conversation_id="conv_001",
-        priority=Priority.HIGH,
         payload={
             'confirmed_time': {
                 'start_time': (datetime.now() + timedelta(days=2)).replace(hour=14, minute=30).isoformat()
@@ -160,7 +155,6 @@ def test_human_readable_format():
         to_agent_email="john@example.com",  
         timestamp=datetime.now(),
         conversation_id="conv_001",
-        priority=Priority.MEDIUM,
         payload={
             'reason': 'All proposed times conflict with existing meetings',
             'alternative_suggestion': 'Would Thursday morning or Friday afternoon work better?'

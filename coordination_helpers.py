@@ -41,8 +41,8 @@ def setup_coordination_for_user(user_name: str, user_email: str,
     }
 
 def schedule_meeting_with_agent(target_email: str, meeting_subject: str, 
-                               duration_minutes: int = 30, urgency: str = "medium",
-                               meeting_type: str = "1:1", attendees: List[str] = None) -> Dict[str, Any]:
+                               duration_minutes: int = 30, meeting_type: str = "1:1", 
+                               attendees: List[str] = None) -> Dict[str, Any]:
     """Schedule meeting with any agent by email address"""
     
     # Ensure system is initialized
@@ -59,7 +59,6 @@ def schedule_meeting_with_agent(target_email: str, meeting_subject: str,
         target_agent_email=target_email,
         meeting_subject=meeting_subject,
         duration_minutes=duration_minutes,
-        urgency=urgency,
         meeting_type=meeting_type,
         attendees=attendees
     )
@@ -71,7 +70,6 @@ def schedule_meeting_with_agent(target_email: str, meeting_subject: str,
         "to_email": target_email,
         "meeting_subject": meeting_subject,
         "duration_minutes": duration_minutes,
-        "urgency": urgency,
         "next_steps": [
             f"Coordination message sent to {target_email}",
             "Target agent will analyze request and respond",
@@ -122,14 +120,12 @@ def update_my_context(workload: str = None, energy: str = None,
     return update_coordination_context(workload, energy, meetings_today)
 
 # Convenience functions for common scenarios
-def schedule_with_sarah(meeting_subject: str, duration_minutes: int = 30, 
-                       urgency: str = "medium") -> Dict[str, Any]:
+def schedule_with_sarah(meeting_subject: str, duration_minutes: int = 30) -> Dict[str, Any]:
     """Schedule meeting with Sarah (example)"""
     return schedule_meeting_with_agent(
         target_email="sarah@empire.email",
         meeting_subject=meeting_subject,
-        duration_minutes=duration_minutes,
-        urgency=urgency
+        duration_minutes=duration_minutes
     )
 
 def schedule_with_team_member(email: str, meeting_subject: str, 
@@ -139,7 +135,6 @@ def schedule_with_team_member(email: str, meeting_subject: str,
         target_email=email,
         meeting_subject=meeting_subject,  
         duration_minutes=duration_minutes,
-        urgency="medium",
         meeting_type="team_meeting"
     )
 
@@ -149,7 +144,6 @@ def quick_15min_sync(email: str, subject: str = "Quick Sync") -> Dict[str, Any]:
         target_email=email,
         meeting_subject=subject,
         duration_minutes=15,
-        urgency="medium",
         meeting_type="sync"
     )
 
@@ -159,7 +153,6 @@ def urgent_meeting(email: str, subject: str, duration_minutes: int = 30) -> Dict
         target_email=email,
         meeting_subject=subject,
         duration_minutes=duration_minutes,
-        urgency="urgent",
         meeting_type="urgent_meeting"
     )
 
@@ -171,7 +164,7 @@ CONTACT_DIRECTORY = {
 }
 
 def schedule_with_contact(contact_name: str, meeting_subject: str, 
-                         duration_minutes: int = 30, urgency: str = "medium") -> Dict[str, Any]:
+                         duration_minutes: int = 30) -> Dict[str, Any]:
     """Schedule meeting using contact name instead of email"""
     
     email = CONTACT_DIRECTORY.get(contact_name.lower())
@@ -185,8 +178,7 @@ def schedule_with_contact(contact_name: str, meeting_subject: str,
     return schedule_meeting_with_agent(
         target_email=email,
         meeting_subject=meeting_subject,
-        duration_minutes=duration_minutes,
-        urgency=urgency
+        duration_minutes=duration_minutes
     )
 
 if __name__ == "__main__":

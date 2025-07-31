@@ -13,7 +13,6 @@ from integrated_agent_coordination import (
     SchedulingPreferences,
     CoordinationMessage,
     MessageType,
-    Priority,
     TimeSlot
 )
 
@@ -65,7 +64,6 @@ def test_schedule_confirmation_calendar():
             to_agent_email=test_agent.user_email,
             timestamp=datetime.now(),
             conversation_id="test_conversation_456",
-            priority=Priority.MEDIUM,
             payload={
                 "selected_time": coordinator._serialize_timeslot(confirmed_time_slot),
                 "calendar_event_details": {
@@ -85,11 +83,9 @@ def test_schedule_confirmation_calendar():
                 to_agent_email=test_agent.user_email,
                 timestamp=datetime.now() - timedelta(minutes=30),
                 conversation_id="test_conversation_456",
-                priority=Priority.MEDIUM,
                 payload={
                     "meeting_context": {
                         "meeting_type": "test_meeting",
-                        "urgency": "medium",
                         "duration_minutes": 60,
                         "attendees": ["testuser@example.com", "otheragent@example.com"],
                         "subject": "Test Agent Coordination Meeting",

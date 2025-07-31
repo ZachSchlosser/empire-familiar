@@ -38,12 +38,6 @@ class MessageType(Enum):
     CONTEXT_UPDATE = "context_update"
     COORDINATION_ACK = "coordination_ack"
 
-class Priority(Enum):
-    """Message priority levels"""
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    URGENT = "urgent"
 
 class NegotiationStrategy(Enum):
     """Negotiation strategies for scheduling coordination"""
@@ -89,7 +83,6 @@ class AgentIdentity:
 class MeetingContext:
     """Context for meeting scheduling requests"""
     meeting_type: str  # "1:1", "team_meeting", "client_call", etc.
-    urgency: Priority
     duration_minutes: int
     attendees: List[str]
     subject: str
@@ -141,7 +134,6 @@ class CoordinationMessage:
     to_agent_email: str
     timestamp: datetime
     conversation_id: str
-    priority: Priority
     payload: Dict[str, Any]
     expires_at: Optional[datetime] = None
     requires_response: bool = True
@@ -325,14 +317,6 @@ Protocol: {self.PROTOCOL_VERSION}
                 user_email=from_email
             )
             
-            # Determine priority from human content (look for "Priority:" line)
-            priority = Priority.MEDIUM  # default
-            for line in human_content.split('\n'):
-                if line.startswith('• Priority:'):
-                    priority_text = line.split(':', 1)[1].strip().lower()
-                    if priority_text in [p.value for p in Priority]:
-                        priority = Priority(priority_text)
-                    break
             
             # Determine if response is needed
             requires_response = 'Response Needed:' in human_content
@@ -352,7 +336,6 @@ Protocol: {self.PROTOCOL_VERSION}
                 to_agent_email=self.agent_identity.user_email,
                 timestamp=datetime.now(),  # Use current time as fallback
                 conversation_id=conversation_id,
-                priority=priority,
                 payload=payload,
                 requires_response=requires_response,
                 expires_at=None  # Could be extracted from human content if needed
@@ -388,8 +371,6 @@ Protocol: {self.PROTOCOL_VERSION}
                         meeting_context['description'] = line.split(':', 1)[1].strip()
                     elif line.startswith('• Type:'):
                         meeting_context['meeting_type'] = line.split(':', 1)[1].strip()
-                    elif line.startswith('• Urgency:'):
-                        meeting_context['urgency'] = line.split(':', 1)[1].strip()
                 
                 if meeting_context:
                     payload['meeting_context'] = meeting_context
@@ -455,7 +436,6 @@ Protocol: {self.PROTOCOL_VERSION}
         
         summary = f"{header}\n"
         summary += f"• From: {message.from_agent.user_name}'s Assistant\n"
-        summary += f"• Priority: {message.priority.value.upper()}\n"
         summary += f"• Sent: {message.timestamp.strftime('%B %d, %Y at %I:%M %p')}\n"
         
         # Add detailed payload information based on message type
@@ -469,8 +449,6 @@ Protocol: {self.PROTOCOL_VERSION}
                     summary += f"• Participants: {attendees}\n"
                 if 'description' in ctx and ctx['description']:
                     summary += f"• Description: {ctx['description']}\n"
-                if 'urgency' in ctx:
-                    summary += f"• Urgency: {ctx['urgency']}\n"
                 if 'meeting_type' in ctx:
                     summary += f"• Type: {ctx['meeting_type']}\n"
             
@@ -543,10 +521,19 @@ Protocol: {self.PROTOCOL_VERSION}
             summary += "• Status: Calendar invite will be sent\n"
         
         elif message.message_type == MessageType.SCHEDULE_REJECTION:
-            if 'reason' in message.payload:
-                summary += f"• Reason: {message.payload['reason']}\n"
+            # Always show rejection reason with proper validation
+            reason = message.payload.get('rejection_reason') or message.payload.get('reason')
+            if reason and reason.strip() and not reason.strip().lower() in ["no reason provided", "none", "n/a"]:
+                summary += f"• Reason: {reason}\n"
+            else:
+                # This should never happen with proper validation, but handle gracefully
+                summary += "• Reason: [ERROR] Rejection received without meaningful reason - protocol violation\n"
             if 'alternative_suggestion' in message.payload:
                 summary += f"• Suggestion: {message.payload['alternative_suggestion']}\n"
+            elif 'alternative_suggestions' in message.payload:
+                suggestions = message.payload['alternative_suggestions']
+                if suggestions and len(suggestions) > 0:
+                    summary += f"• Suggestions: {', '.join(suggestions[:2])}\n"
         
         elif message.message_type == MessageType.AVAILABILITY_QUERY:
             if 'query_period' in message.payload:
@@ -772,7 +759,6 @@ class IntegratedCoordinationProtocol:
             to_agent_email=target_agent_email,
             timestamp=datetime.now(),
             conversation_id="",
-            priority=meeting_context.urgency,
             payload=payload
         )
         
@@ -856,9 +842,6 @@ class IntegratedCoordinationProtocol:
             # Parse meeting context with proper enum handling
             context_data = message.payload["meeting_context"].copy()
             
-            # Convert urgency string to Priority enum if needed
-            if 'urgency' in context_data and isinstance(context_data['urgency'], str):
-                context_data['urgency'] = Priority(context_data['urgency'])
             
             meeting_context = MeetingContext(**context_data)
             time_preferences = message.payload.get("time_preferences", ["morning", "afternoon"])
@@ -882,28 +865,20 @@ class IntegratedCoordinationProtocol:
                     to_agent_email=message.from_agent.user_email,
                     timestamp=datetime.now(),
                     conversation_id=message.conversation_id,
-                    priority=message.priority,
                     payload=payload
                 )
             else:
-                # Send rejection with alternatives
-                payload = {
-                    'original_request_id': message.message_id,
-                    'rejection_reason': 'No suitable times found',
-                    'alternative_suggestions': self._suggest_alternatives(meeting_context)
-                }
+                # Send rejection with detailed reason and alternatives
+                meeting_duration = meeting_context.duration_minutes
+                date_range = f"{meeting_context.preferred_start_date} to {meeting_context.preferred_end_date}"
+                time_prefs = ", ".join(time_preferences) if time_preferences else "any time"
                 
-                return CoordinationMessage(
-                    message_id="",
-                    message_type=MessageType.SCHEDULE_REJECTION,
-                    from_agent=self.agent_identity,
-                    to_agent_email=message.from_agent.user_email,
-                    timestamp=datetime.now(),
-                    conversation_id=message.conversation_id,
-                    priority=message.priority,
-                    payload=payload,
-                    requires_response=False
-                )
+                detailed_reason = (f"Unable to find any available {meeting_duration}-minute slots "
+                                 f"between {date_range} during preferred times ({time_prefs}). "
+                                 f"My calendar appears fully booked during those periods.")
+                
+                # Use the standardized rejection message creation with validation
+                return self._create_rejection_message(message, detailed_reason)
                 
         except Exception as e:
             logger.error(f"Error handling schedule request: {e}")
@@ -931,7 +906,7 @@ class IntegratedCoordinationProtocol:
             
             if not original_request:
                 logger.error("Cannot find original request in conversation")
-                return self._create_rejection_message(message, "Cannot find original scheduling context")
+                return self._create_rejection_message(message, "Cannot locate the original meeting request in our conversation history, making it impossible to process this proposal properly")
             
             meeting_context = MeetingContext(**original_request.payload["meeting_context"])
             
@@ -965,7 +940,6 @@ class IntegratedCoordinationProtocol:
                     to_agent_email=message.from_agent.user_email,
                     timestamp=datetime.now(),
                     conversation_id=message.conversation_id,
-                    priority=message.priority,
                     payload=payload,
                     requires_response=False
                 )
@@ -991,14 +965,14 @@ class IntegratedCoordinationProtocol:
                     to_agent_email=message.from_agent.user_email,
                     timestamp=datetime.now(),
                     conversation_id=message.conversation_id,
-                    priority=message.priority,
                     payload=payload,
                     requires_response=False
                 )
                 
         except Exception as e:
             logger.error(f"Error handling schedule proposal: {e}")
-            return self._create_rejection_message(message, f"Error processing proposal: {str(e)}")
+            error_detail = str(e) if str(e).strip() else "Unknown system error occurred"
+            return self._create_rejection_message(message, f"Unable to process meeting proposal due to technical issue: {error_detail}")
             
         return None
     
@@ -1053,7 +1027,6 @@ class IntegratedCoordinationProtocol:
                     to_agent_email=message.from_agent.user_email,
                     timestamp=datetime.now(),
                     conversation_id=message.conversation_id,
-                    priority=Priority.LOW,
                     payload=payload,
                     requires_response=False
                 )
@@ -1076,7 +1049,6 @@ class IntegratedCoordinationProtocol:
                     to_agent_email=message.from_agent.user_email,
                     timestamp=datetime.now(),
                     conversation_id=message.conversation_id,
-                    priority=Priority.LOW,
                     payload=payload,
                     requires_response=False
                 )
@@ -1126,7 +1098,6 @@ class IntegratedCoordinationProtocol:
                     to_agent_email=message.from_agent.user_email,
                     timestamp=datetime.now(),
                     conversation_id=message.conversation_id,
-                    priority=message.priority,
                     payload=payload,
                     requires_response=False
                 )
@@ -1152,16 +1123,16 @@ class IntegratedCoordinationProtocol:
                             to_agent_email=message.from_agent.user_email,
                             timestamp=datetime.now(),
                             conversation_id=message.conversation_id,
-                            priority=message.priority,
-                            payload=payload
+                                    payload=payload
                         )
                 
                 # If we can't find alternatives, reject
-                return self._create_rejection_message(message, "Unable to find mutually acceptable time")
+                return self._create_rejection_message(message, "After analyzing all proposed times and our calendar constraints, we cannot find any mutually available slots that work for both schedules")
                 
         except Exception as e:
             logger.error(f"Error handling schedule counter-proposal: {e}")
-            return self._create_rejection_message(message, f"Error processing counter-proposal: {str(e)}")
+            error_detail = str(e) if str(e).strip() else "Unknown system error occurred"
+            return self._create_rejection_message(message, f"Unable to process counter-proposal due to technical issue: {error_detail}")
     
     def _handle_schedule_rejection(self, message: CoordinationMessage) -> Optional[CoordinationMessage]:
         """Handle incoming schedule rejection"""
@@ -1169,7 +1140,17 @@ class IntegratedCoordinationProtocol:
         logger.info(f"Processing schedule rejection from {message.from_agent.agent_id}")
         
         try:
-            rejection_reason = message.payload.get("rejection_reason", "No reason provided")
+            rejection_reason = message.payload.get("rejection_reason")
+            if not rejection_reason or rejection_reason.strip() == "":
+                logger.error("Received rejection message without proper reason - this should not happen")
+                # This should not occur if the other agent is using the proper rejection creation methods
+                rejection_reason = "Technical error: Rejection received without proper reason (possible bug in coordination protocol)"
+            
+            # Additional validation to ensure meaningful rejection reasons
+            if rejection_reason.strip().lower() in ["no reason provided", "none", "n/a", "unknown"]:
+                logger.error(f"Received meaningless rejection reason: {rejection_reason}")
+                rejection_reason = f"Invalid rejection reason received: '{rejection_reason}' - this indicates a protocol violation"
+            
             logger.info(f"Meeting rejected: {rejection_reason}")
             
             # Send acknowledgment that rejection was received
@@ -1187,7 +1168,6 @@ class IntegratedCoordinationProtocol:
                 to_agent_email=message.from_agent.user_email,
                 timestamp=datetime.now(),
                 conversation_id=message.conversation_id,
-                priority=Priority.LOW,
                 payload=payload,
                 requires_response=False
             )
@@ -1438,7 +1418,6 @@ class IntegratedCoordinationProtocol:
         for slot in proposed_times:
             slot.confidence_score = self._calculate_contextual_score(slot, MeetingContext(
                 meeting_type="proposed_meeting",
-                urgency=Priority.MEDIUM,
                 duration_minutes=60,
                 attendees=[],
                 subject="Evaluation"
@@ -1481,7 +1460,6 @@ class IntegratedCoordinationProtocol:
         return {
             "meeting_complexity": "high" if meeting_context.requires_preparation else "medium",
             "optimal_energy_match": meeting_context.energy_requirement,
-            "urgency_factor": meeting_context.urgency.value,
             "duration_category": "short" if meeting_context.duration_minutes <= 30 else "standard"
         }
     
@@ -1530,7 +1508,6 @@ class IntegratedCoordinationProtocol:
         if not meeting_context:
             meeting_context = MeetingContext(
                 meeting_type="coordination_meeting",
-                urgency=Priority.MEDIUM,
                 duration_minutes=30,
                 attendees=[],
                 subject="Agent Coordinated Meeting"
@@ -1822,9 +1799,6 @@ class IntegratedCoordinationProtocol:
                 "Prepare relevant materials and presentations"
             ])
         
-        # Urgency-based suggestions
-        if meeting_context.urgency == Priority.HIGH:
-            preparations.append("Gather all relevant materials - high priority meeting")
         
         return preparations[:3]  # Limit to 3 preparation items
     
@@ -1875,16 +1849,8 @@ class IntegratedCoordinationProtocol:
             return False
     
     def _serialize_meeting_context(self, meeting_context: MeetingContext) -> Dict[str, Any]:
-        """Serialize MeetingContext with enum handling"""
-        context_dict = asdict(meeting_context)
-        
-        # Convert enum to string value
-        if isinstance(context_dict.get('urgency'), Priority):
-            context_dict['urgency'] = context_dict['urgency'].value
-        elif hasattr(context_dict.get('urgency'), 'value'):
-            context_dict['urgency'] = context_dict['urgency'].value
-        
-        return context_dict
+        """Serialize MeetingContext for JSON transmission"""
+        return asdict(meeting_context)
     
     def _serialize_preferences(self, preferences: SchedulingPreferences) -> Dict[str, Any]:
         """Serialize SchedulingPreferences for JSON transmission"""
@@ -1980,37 +1946,37 @@ class IntegratedCoordinationProtocol:
             time_str = slot.start_time.strftime('%A, %B %d at %I:%M %p')
             our_summary.append(f"Available {i}: {time_str}")
         
-        payload = {
-            'original_message_id': original_message.message_id,
-            'reason': 'No mutual window found',
+        # Create a detailed rejection reason with context
+        detailed_reason = (f"No mutual availability found after comparing all proposed times. "
+                          f"Their proposals: {', '.join(proposed_summary[:2])}{'...' if len(proposed_summary) > 2 else ''}. "
+                          f"My availability: {', '.join(our_summary[:2])}{'...' if len(our_summary) > 2 else ''}. "
+                          "Consider extending the timeframe or adjusting preferences.")
+        
+        # Use the standardized rejection message creation with validation
+        rejection_message = self._create_rejection_message(original_message, detailed_reason)
+        
+        # Add additional context to the payload
+        rejection_message.payload.update({
             'coordination_status': 'no_mutual_availability',
             'their_proposed_times': proposed_summary,
-            'our_available_times': our_summary,
-            'alternative_suggestions': [
-                "Consider extending the meeting timeframe to next week",
-                "Try different time preferences (morning/afternoon/evening)",
-                "Consider a shorter meeting duration",
-                "Schedule multiple shorter sessions instead"
-            ]
-        }
+            'our_available_times': our_summary
+        })
         
-        return CoordinationMessage(
-            message_id="",
-            message_type=MessageType.SCHEDULE_REJECTION,
-            from_agent=self.agent_identity,
-            to_agent_email=original_message.from_agent.user_email,
-            timestamp=datetime.now(),
-            conversation_id=original_message.conversation_id,
-            priority=original_message.priority,
-            payload=payload,
-            requires_response=False
-        )
+        return rejection_message
     
     def _create_rejection_message(self, original_message: CoordinationMessage, reason: str) -> CoordinationMessage:
-        """Create a rejection message"""
+        """Create a rejection message with mandatory meaningful reason"""
+        # Validate that reason is meaningful
+        if not reason or reason.strip() == "" or reason.strip().lower() in ["no reason provided", "none", "n/a"]:
+            raise ValueError("Rejection reason must be provided and meaningful. Cannot reject meeting without a proper explanation.")
+        
+        # Ensure reason is descriptive enough
+        if len(reason.strip()) < 10:
+            raise ValueError(f"Rejection reason too brief: '{reason}'. Please provide a more detailed explanation (at least 10 characters).")
+        
         payload = {
             'original_message_id': original_message.message_id,
-            'rejection_reason': reason,
+            'rejection_reason': reason.strip(),
             'alternative_suggestions': [
                 "Consider extending the meeting timeframe",
                 "Try scheduling for next week",
@@ -2025,7 +1991,6 @@ class IntegratedCoordinationProtocol:
             to_agent_email=original_message.from_agent.user_email,
             timestamp=datetime.now(),
             conversation_id=original_message.conversation_id,
-            priority=original_message.priority,
             payload=payload,
             requires_response=False
         )
@@ -2100,8 +2065,8 @@ def initialize_integrated_coordination_system(agent_config: Dict[str, Any] = Non
     return _integrated_coordinator
 
 def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str, 
-                                 duration_minutes: int = 30, urgency: str = "medium", 
-                                 meeting_type: str = "1:1", attendees: List[str] = None) -> bool:
+                                 duration_minutes: int = 30, meeting_type: str = "1:1", 
+                                 attendees: List[str] = None) -> bool:
     """Send intelligent coordination request to target agent"""
     
     coordinator = initialize_integrated_coordination_system()
@@ -2112,7 +2077,6 @@ def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str
     
     meeting_context = MeetingContext(
         meeting_type=meeting_type,
-        urgency=Priority(urgency),
         duration_minutes=duration_minutes,
         attendees=attendees,
         subject=meeting_subject,
@@ -2182,8 +2146,7 @@ def test_integrated_coordination():
         success = coordinate_intelligent_meeting(
             target_agent_email="test@example.com",
             meeting_subject="Test Intelligent Coordination", 
-            duration_minutes=30,
-            urgency="medium"
+            duration_minutes=30
         )
         print(f"✅ Coordination request sent: {success}")
         

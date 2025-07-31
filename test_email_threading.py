@@ -14,7 +14,6 @@ from integrated_agent_coordination import (
     get_coordination_system_status,
     AgentIdentity,
     MeetingContext,
-    Priority,
     SchedulingPreferences,
     EmailTransportLayer,
     CoordinationMessage,
@@ -41,7 +40,6 @@ def test_email_threading_functionality():
             target_agent_email=target_email,
             meeting_subject="Threading Test Meeting",
             duration_minutes=30,
-            urgency="medium",
             meeting_type="test_meeting"
         )
         
@@ -87,7 +85,6 @@ def test_email_threading_functionality():
             to_agent_email=target_email,
             timestamp=datetime.now(),
             conversation_id=list(transport.conversation_threading.keys())[0] if transport.conversation_threading else "new_conv",
-            priority=Priority.MEDIUM,
             payload={'test': 'payload'}
         )
         

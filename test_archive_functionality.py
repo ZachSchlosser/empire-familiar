@@ -44,7 +44,6 @@ def test_archive_functionality():
         to_agent_email="colleague@example.com",
         timestamp=datetime.now(),
         conversation_id=conversation_id,
-        priority=Priority.MEDIUM,
         payload={'test': 'data'},
         requires_response=True
     )

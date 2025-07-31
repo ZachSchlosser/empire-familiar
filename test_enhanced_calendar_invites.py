@@ -37,7 +37,6 @@ def test_enhanced_calendar_invites():
     # Create test meeting context
     meeting_context = MeetingContext(
         meeting_type="project_planning",
-        urgency=Priority.HIGH,
         duration_minutes=60,
         attendees=["john.smith@company.com", "sarah.chen@company.com", "mike.johnson@company.com"],
         subject="Q1 Strategy Review",
@@ -76,15 +75,13 @@ def test_enhanced_calendar_invites():
             to_agent_email="sarah.chen@company.com",
             timestamp=datetime.now(),
             conversation_id=conversation_id,
-            priority=Priority.HIGH,
             payload={
                 'meeting_context': {
                     'subject': meeting_context.subject,
                     'description': meeting_context.description + " Please review https://docs.google.com/document/d/abc123/strategy-doc",
                     'duration_minutes': meeting_context.duration_minutes,
                     'attendees': meeting_context.attendees,
-                    'meeting_type': meeting_context.meeting_type,
-                    'urgency': meeting_context.urgency.value
+                    'meeting_type': meeting_context.meeting_type
                 }
             },
             requires_response=True
@@ -193,7 +190,6 @@ def test_enhanced_calendar_invites():
         to_agent_email="john.smith@company.com",
         timestamp=datetime.now(),
         conversation_id=conversation_id,
-        priority=Priority.HIGH,
         payload={},
         requires_response=False
     )

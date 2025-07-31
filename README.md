@@ -20,7 +20,7 @@ An intelligent agent-to-agent calendar coordination system that enables Claude C
 ### **Smart Coordination**
 - **Conflict Detection**: Real-time calendar checking to avoid scheduling conflicts
 - **Time Preferences**: Respects morning/afternoon preferences and constraints
-- **Context Awareness**: Considers workload, urgency, and meeting types
+- **Context Awareness**: Considers workload and meeting types
 - **Multi-Round Negotiation**: Intelligent counter-proposals when initial times don't work
 - **Graceful Error Handling**: Continues coordination even if some operations fail
 
@@ -113,8 +113,7 @@ from coordination_helpers import schedule_meeting_with_agent
 result = schedule_meeting_with_agent(
     target_email="colleague@company.com",
     meeting_subject="Project Planning Meeting", 
-    duration_minutes=60,
-    urgency="high"
+    duration_minutes=60
 )
 
 # Quick 15-minute sync
