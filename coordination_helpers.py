@@ -42,7 +42,7 @@ def setup_coordination_for_user(user_name: str, user_email: str,
 
 def schedule_meeting_with_agent(target_email: str, meeting_subject: str, 
                                duration_minutes: int = 30, meeting_type: str = "1:1", 
-                               attendees: List[str] = None) -> Dict[str, Any]:
+                               attendees: List[str] = None, time_preference: str = None) -> Dict[str, Any]:
     """Schedule meeting with any agent by email address"""
     
     # Ensure system is initialized
@@ -60,7 +60,8 @@ def schedule_meeting_with_agent(target_email: str, meeting_subject: str,
         meeting_subject=meeting_subject,
         duration_minutes=duration_minutes,
         meeting_type=meeting_type,
-        attendees=attendees
+        attendees=attendees,
+        time_preference=time_preference
     )
     
     return {

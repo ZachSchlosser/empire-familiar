@@ -1082,6 +1082,55 @@ class IntegratedCoordinationProtocol:
         
         logger.info(f"Integrated coordination protocol initialized for {agent_identity.agent_id}")
     
+    def _parse_time_preference(self, time_preference: str) -> Tuple[datetime, datetime]:
+        """Parse natural language time preference into date range.
+        
+        Args:
+            time_preference: Natural language like 'next week', 'this week', 'tomorrow', etc.
+            
+        Returns:
+            Tuple of (start_date, end_date) for the time range
+        """
+        if not time_preference:
+            # Default: next 7 days from now
+            now = datetime.now()
+            return now, now + timedelta(days=7)
+            
+        now = datetime.now()
+        time_pref_lower = time_preference.lower()
+        
+        if time_pref_lower == "today":
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+        elif time_pref_lower == "tomorrow":
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            end = start + timedelta(days=1)
+        elif "this week" in time_pref_lower:
+            days_since_monday = now.weekday()
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_since_monday)
+            end = start + timedelta(days=7)
+        elif "next week" in time_pref_lower:
+            days_since_monday = now.weekday()
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_since_monday) + timedelta(days=7)
+            end = start + timedelta(days=7)
+        elif "this afternoon" in time_pref_lower:
+            start = now.replace(hour=13, minute=0, second=0, microsecond=0)  # 1 PM
+            end = now.replace(hour=17, minute=0, second=0, microsecond=0)    # 5 PM
+        elif "tomorrow morning" in time_pref_lower:
+            tomorrow = now + timedelta(days=1)
+            start = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)   # 9 AM
+            end = tomorrow.replace(hour=12, minute=0, second=0, microsecond=0)    # 12 PM
+        elif "tomorrow afternoon" in time_pref_lower:
+            tomorrow = now + timedelta(days=1)
+            start = tomorrow.replace(hour=13, minute=0, second=0, microsecond=0)  # 1 PM
+            end = tomorrow.replace(hour=17, minute=0, second=0, microsecond=0)    # 5 PM
+        else:
+            # Default to next 7 days
+            start = now
+            end = now + timedelta(days=7)
+        
+        return start, end
+    
     def send_schedule_request(self, target_agent_email: str, meeting_context: MeetingContext,
                             time_preferences: List[str] = None) -> bool:
         """Send scheduling request to target agent"""
@@ -1605,15 +1654,28 @@ class IntegratedCoordinationProtocol:
         """Find available times with intelligent scheduling"""
         
         try:
-            # Get calendar events for analysis with proper timezone handling
+            # Parse time preferences for dynamic date range
             now = datetime.now()
-            search_end = now + timedelta(days=7)
+            time_preferences = request_payload.get("time_preferences", ["morning", "afternoon"])
+            
+            # Check if time_preferences contains natural language time expressions
+            search_start = now
+            search_end = now + timedelta(days=7)  # Default: 7 days
+            
+            if time_preferences and isinstance(time_preferences, list) and time_preferences:
+                # Check if first preference is a natural language expression
+                first_pref = time_preferences[0]
+                if any(expr in first_pref.lower() for expr in ['next week', 'this week', 'tomorrow', 'today', 'afternoon', 'morning']):
+                    # This is a natural language time preference
+                    search_start, search_end = self._parse_time_preference(first_pref)
+                    # Remove the natural language preference, keep only time-of-day preferences
+                    time_preferences = [pref for pref in time_preferences[1:] if pref in ['morning', 'afternoon', 'evening']] or ['morning', 'afternoon']
             
             # Use try-catch for calendar API to handle errors gracefully
             existing_events = []
             try:
                 existing_events = self.calendar_manager.get_events(
-                    time_min=now,
+                    time_min=search_start,
                     time_max=search_end,
                     max_results=50
                 )
@@ -1621,23 +1683,26 @@ class IntegratedCoordinationProtocol:
                 logger.warning(f"Calendar API error (using empty events list): {calendar_error}")
                 existing_events = []
             
-            # Generate intelligent time slots
+            # Generate intelligent time slots within the parsed date range
             slots = []
-            time_preferences = request_payload.get("time_preferences", ["morning", "afternoon"])
+            current_date = search_start.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_date = search_end.replace(hour=0, minute=0, second=0, microsecond=0)
             
-            for day_offset in range(1, 8):  # Next 7 days
-                target_date = now + timedelta(days=day_offset)
-                
+            while current_date < end_date:
                 # Skip weekends unless explicitly requested
-                if target_date.weekday() >= 5:
+                if current_date.weekday() >= 5:
+                    current_date += timedelta(days=1)
                     continue
                 
-                # Generate slots based on preferences and context
-                daily_slots = self._generate_intelligent_daily_slots(
-                    target_date, meeting_context, time_preferences, existing_events
-                )
+                # Only generate slots for dates that are today or in the future
+                if current_date.date() >= now.date():
+                    # Generate slots based on preferences and context
+                    daily_slots = self._generate_intelligent_daily_slots(
+                        current_date, meeting_context, time_preferences, existing_events
+                    )
+                    slots.extend(daily_slots)
                 
-                slots.extend(daily_slots)
+                current_date += timedelta(days=1)
             
             # Score and rank slots
             scored_slots = []
@@ -1659,15 +1724,28 @@ class IntegratedCoordinationProtocol:
         """Find ALL available times that match criteria for 3-step protocol"""
         
         try:
-            # Get calendar events for analysis with proper timezone handling
+            # Parse time preferences for dynamic date range
             now = datetime.now()
-            search_end = now + timedelta(days=7)
+            time_preferences = request_payload.get("time_preferences", ["morning", "afternoon"])
+            
+            # Check if time_preferences contains natural language time expressions
+            search_start = now
+            search_end = now + timedelta(days=7)  # Default: 7 days
+            
+            if time_preferences and isinstance(time_preferences, list) and time_preferences:
+                # Check if first preference is a natural language expression
+                first_pref = time_preferences[0]
+                if any(expr in first_pref.lower() for expr in ['next week', 'this week', 'tomorrow', 'today', 'afternoon', 'morning']):
+                    # This is a natural language time preference
+                    search_start, search_end = self._parse_time_preference(first_pref)
+                    # Remove the natural language preference, keep only time-of-day preferences
+                    time_preferences = [pref for pref in time_preferences[1:] if pref in ['morning', 'afternoon', 'evening']] or ['morning', 'afternoon']
             
             # Use try-catch for calendar API to handle errors gracefully
             existing_events = []
             try:
                 existing_events = self.calendar_manager.get_events(
-                    time_min=now,
+                    time_min=search_start,
                     time_max=search_end,
                     max_results=50
                 )
@@ -1675,23 +1753,26 @@ class IntegratedCoordinationProtocol:
                 logger.warning(f"Calendar API error (using empty events list): {calendar_error}")
                 existing_events = []
             
-            # Generate ALL time slots that match criteria
+            # Generate ALL time slots that match criteria within the parsed date range
             slots = []
-            time_preferences = request_payload.get("time_preferences", ["morning", "afternoon"])
+            current_date = search_start.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_date = search_end.replace(hour=0, minute=0, second=0, microsecond=0)
             
-            for day_offset in range(1, 8):  # Next 7 days
-                target_date = now + timedelta(days=day_offset)
-                
+            while current_date < end_date:
                 # Skip weekends unless explicitly requested
-                if target_date.weekday() >= 5:
+                if current_date.weekday() >= 5:
+                    current_date += timedelta(days=1)
                     continue
                 
-                # Generate slots based on preferences and context
-                daily_slots = self._generate_intelligent_daily_slots(
-                    target_date, meeting_context, time_preferences, existing_events
-                )
+                # Only generate slots for dates that are today or in the future
+                if current_date.date() >= now.date():
+                    # Generate slots based on preferences and context
+                    daily_slots = self._generate_intelligent_daily_slots(
+                        current_date, meeting_context, time_preferences, existing_events
+                    )
+                    slots.extend(daily_slots)
                 
-                slots.extend(daily_slots)
+                current_date += timedelta(days=1)
             
             # Score and rank ALL slots
             scored_slots = []
@@ -2701,7 +2782,7 @@ def initialize_integrated_coordination_system(agent_config: Dict[str, Any] = Non
 
 def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str, 
                                  duration_minutes: int = 30, meeting_type: str = "1:1", 
-                                 attendees: List[str] = None) -> bool:
+                                 attendees: List[str] = None, time_preference: str = None) -> bool:
     """Send intelligent coordination request to target agent"""
     
     coordinator = initialize_integrated_coordination_system()
@@ -2718,7 +2799,12 @@ def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str
         description=f"Intelligently coordinated {meeting_type} meeting"
     )
     
-    return coordinator.send_schedule_request(target_agent_email, meeting_context)
+    # Parse time preference if provided
+    parsed_time_prefs = None
+    if time_preference:
+        parsed_time_prefs = [time_preference]  # Convert to list for compatibility
+    
+    return coordinator.send_schedule_request(target_agent_email, meeting_context, parsed_time_prefs)
 
 def process_agent_coordination_messages() -> List[Dict[str, Any]]:
     """Process incoming coordination messages with intelligent responses"""
