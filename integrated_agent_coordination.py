@@ -227,11 +227,41 @@ class EmailTransportLayer:
             )
             
             if result:
-                # Update conversation threading state
-                self._update_conversation_threading(message, threading_headers['message_id'], result.get('threadId'))
+                # Fetch the sent message to get Gmail's actual Message-ID
+                gmail_message_id = None
+                try:
+                    sent_message = self.gmail.service.users().messages().get(
+                        userId='me',
+                        id=result['id']
+                    ).execute()
+                    
+                    # Extract the actual Message-ID that Gmail assigned
+                    headers = sent_message['payload'].get('headers', [])
+                    for header in headers:
+                        if header['name'].lower() == 'message-id':
+                            gmail_message_id = header['value']
+                            break
+                    
+                    if gmail_message_id:
+                        logger.info(f"Gmail assigned Message-ID: {gmail_message_id}")
+                    else:
+                        logger.warning("Could not extract Gmail Message-ID from sent message")
+                        
+                except Exception as e:
+                    logger.error(f"Error fetching sent message for Message-ID: {e}")
+                
+                # Update conversation threading state with Gmail's actual Message-ID
+                self._update_conversation_threading(
+                    message, 
+                    gmail_message_id or threading_headers['message_id'],  # Fallback to custom if Gmail ID not found
+                    result.get('threadId')
+                )
+                
                 logger.info(f"Coordination message sent to {message.to_agent_email} (threaded)")
                 logger.info(f"  Conversation: {message.conversation_id}")
-                logger.info(f"  Message-ID: {threading_headers['message_id']}")
+                logger.info(f"  Custom Message-ID: {threading_headers['message_id']}")
+                if gmail_message_id:
+                    logger.info(f"  Gmail Message-ID: {gmail_message_id}")
                 if result.get('threadId'):
                     logger.info(f"  Thread-ID: {result['threadId']}")
                 return True
