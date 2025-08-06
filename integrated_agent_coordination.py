@@ -191,6 +191,17 @@ class EmailTransportLayer:
     def send_coordination_message(self, message: CoordinationMessage) -> bool:
         """Send coordination message via email with proper threading"""
         try:
+            # CRITICAL: Prevent self-email bug - never send coordination messages to ourselves
+            if message.to_agent_email == self.agent_identity.user_email:
+                logger.error(f"Self-email prevented: attempted to send coordination message to self ({message.to_agent_email})")
+                logger.error(f"Message type: {message.message_type.value}, Conversation: {message.conversation_id}")
+                return False
+            
+            # Validate recipient email
+            if not message.to_agent_email or '@' not in message.to_agent_email:
+                logger.error(f"Invalid recipient email: {message.to_agent_email}")
+                return False
+            
             # Create email subject with conversation context
             base_subject = f"{self.AGENT_SUBJECT_PREFIX} {message.message_type.value.replace('_', ' ').title()}"
             
@@ -246,6 +257,13 @@ class EmailTransportLayer:
                     
                 parsed_message = self._parse_coordination_email(message)
                 if parsed_message:
+                    # CRITICAL: Skip messages from ourselves to prevent processing our own coordination messages
+                    if parsed_message.from_agent.user_email == self.agent_identity.user_email:
+                        logger.debug(f"Skipping self-sent message from {parsed_message.from_agent.user_email}")
+                        # Track as processed to prevent re-checking
+                        self.processed_message_ids.add(message_id)
+                        continue
+                    
                     coordination_messages.append(parsed_message)
                     # Track as processed to prevent duplicate handling
                     self.processed_message_ids.add(message_id)
