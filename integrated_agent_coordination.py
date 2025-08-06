@@ -920,31 +920,30 @@ Protocol: {self.PROTOCOL_VERSION}
             }
         
         # For replies in existing conversations, use ACTUAL Gmail message IDs for proper threading
-        if message.message_type != MessageType.SCHEDULE_REQUEST:
-            conv_info = self.conversation_threading[conv_id]
+        conv_info = self.conversation_threading[conv_id]
+        
+        # Use threading whenever we have a prior message to reply to (regardless of message type)
+        if conv_info.get('latest_message_id'):
+            # Extract the actual Message-ID header from Gmail format
+            latest_msg_id = conv_info['latest_message_id']
+            threading_headers['in_reply_to'] = latest_msg_id
             
-            # Use the latest actual Gmail message ID for In-Reply-To (proper threading)
-            if conv_info.get('latest_message_id'):
-                # Extract the actual Message-ID header from Gmail format
-                latest_msg_id = conv_info['latest_message_id']
-                threading_headers['in_reply_to'] = latest_msg_id
-                
-                # Build References chain with all previous message IDs
-                if conv_info['message_ids']:
-                    # Use actual Gmail message IDs for References header
-                    references = ' '.join(conv_info['message_ids'][-5:])  # Last 5 for manageability
-                    if latest_msg_id not in references:
-                        references += f' {latest_msg_id}'
-                    threading_headers['references'] = references
-                else:
-                    threading_headers['references'] = latest_msg_id
-                    
-                logger.debug(f"Threading reply to latest message: {latest_msg_id}")
+            # Build References chain with all previous message IDs
+            if conv_info['message_ids']:
+                # Use actual Gmail message IDs for References header
+                references = ' '.join(conv_info['message_ids'][-5:])  # Last 5 for manageability
+                if latest_msg_id not in references:
+                    references += f' {latest_msg_id}'
+                threading_headers['references'] = references
             else:
-                logger.warning(f"No latest message ID found for conversation {conv_id}, this may create a new thread")
-            
-            # Use consistent subject for replies
-            threading_headers['subject'] = conv_info['subject']
+                threading_headers['references'] = latest_msg_id
+                
+            logger.debug(f"Threading reply to latest message: {latest_msg_id}")
+        else:
+            logger.warning(f"No latest message ID found for conversation {conv_id}, this may create a new thread")
+        
+        # Use consistent subject for replies
+        threading_headers['subject'] = conv_info['subject']
         
         return threading_headers
     
