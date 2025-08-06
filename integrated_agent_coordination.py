@@ -1812,13 +1812,13 @@ class IntegratedCoordinationProtocol:
         
         # Relevant Links & Resources Section
         description_parts.append("📎 RELEVANT LINKS & RESOURCES")
-        document_links = self._extract_document_links(conversation)
+        all_links = self._extract_all_links(conversation)
         
-        if document_links:
-            for link in document_links:
-                description_parts.append(f"• Related document: {link}")
+        if all_links:
+            for link in all_links:
+                description_parts.append(f"• Link: {link}")
         else:
-            description_parts.append("• No documents referenced in coordination")
+            description_parts.append("• No links referenced in coordination")
         
         # Project context detection
         project_context = self._detect_project_context(conversation)
@@ -1863,38 +1863,62 @@ class IntegratedCoordinationProtocol:
         
         return max(alternatives, 1)  # At least 1 option was considered
     
-    def _extract_document_links(self, conversation: List[CoordinationMessage]) -> List[str]:
-        """Extract Google Docs/Drive links from coordination messages"""
+    def _extract_all_links(self, conversation: List[CoordinationMessage]) -> List[str]:
+        """Extract all HTTP/HTTPS links from coordination messages and email content"""
         links = []
-        
-        # Common Google service URL patterns
-        google_patterns = [
-            r'https://docs\.google\.com/[^\s]+',
-            r'https://drive\.google\.com/[^\s]+',
-            r'https://sheets\.google\.com/[^\s]+',
-            r'https://slides\.google\.com/[^\s]+'
-        ]
-        
         import re
         
+        # Comprehensive URL pattern to catch all HTTP/HTTPS links
+        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+[^\s<>"{}|\\^`\[\].,;:!?)]'
+        
         for msg in conversation:
-            # Check message payload for links
+            # Search message payload for links
+            self._extract_links_from_data_structure(msg.payload, url_pattern, links)
+            
+            # Also search email content that was used to create the message
+            # This covers subjects, human-readable descriptions, and any other text content
+            
+            # Check if there's a meeting context with subject/description
+            if hasattr(msg, 'payload') and 'meeting_context' in msg.payload:
+                context = msg.payload['meeting_context']
+                if isinstance(context, dict):
+                    # Search meeting subject and description
+                    for field in ['subject', 'description']:
+                        if field in context and isinstance(context[field], str):
+                            found_links = re.findall(url_pattern, context[field])
+                            links.extend(found_links)
+            
+            # Search any string fields in the message payload root level
             for key, value in msg.payload.items():
                 if isinstance(value, str):
-                    for pattern in google_patterns:
-                        found_links = re.findall(pattern, value)
-                        links.extend(found_links)
-                elif isinstance(value, dict):
-                    # Check nested dictionary values
-                    for nested_key, nested_value in value.items():
-                        if isinstance(nested_value, str):
-                            for pattern in google_patterns:
-                                found_links = re.findall(pattern, nested_value)
-                                links.extend(found_links)
+                    found_links = re.findall(url_pattern, value)
+                    links.extend(found_links)
         
-        # Remove duplicates and return up to 3 links
+        # Remove duplicates and return ALL links (no artificial limit)
         unique_links = list(set(links))
-        return unique_links[:3]
+        # Clean up any malformed URLs that might have trailing punctuation
+        cleaned_links = []
+        for link in unique_links:
+            # Remove common trailing punctuation that might get caught
+            link = link.rstrip('.,;:!?)')
+            if link and len(link) > 10:  # Basic sanity check
+                cleaned_links.append(link)
+        
+        return cleaned_links
+    
+    def _extract_links_from_data_structure(self, data, url_pattern, links):
+        """Recursively extract links from nested data structures"""
+        import re
+        
+        if isinstance(data, str):
+            found_links = re.findall(url_pattern, data)
+            links.extend(found_links)
+        elif isinstance(data, dict):
+            for key, value in data.items():
+                self._extract_links_from_data_structure(value, url_pattern, links)
+        elif isinstance(data, list):
+            for item in data:
+                self._extract_links_from_data_structure(item, url_pattern, links)
     
     def _detect_project_context(self, conversation: List[CoordinationMessage]) -> str:
         """Detect project keywords and context from coordination messages"""
