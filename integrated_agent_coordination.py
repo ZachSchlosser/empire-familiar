@@ -1484,7 +1484,7 @@ class IntegratedCoordinationProtocol:
         return TimeSlot(
             start_time=self._parse_time_string(slot_data["start_time"]),
             end_time=self._parse_time_string(slot_data["end_time"]),
-            confidence_score=slot_data["confidence_score"],
+            confidence_score=slot_data.get("confidence_score", 0.8),  # Default confidence for human-parsed times
             conflicts=slot_data.get("conflicts", []),
             context_score=slot_data.get("context_score", {})
         )
