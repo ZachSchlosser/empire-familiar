@@ -178,4 +178,4 @@ ehthumbs_vista.db
 
 # Temporary files
 temp/
-tmp/
+tmp/processed_messages.json
