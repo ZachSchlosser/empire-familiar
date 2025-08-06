@@ -1761,8 +1761,8 @@ class IntegratedCoordinationProtocol:
         """Find available times with intelligent scheduling"""
         
         try:
-            # Parse time preferences for dynamic date range
-            now = datetime.now()
+            # Parse time preferences for dynamic date range - use timezone-aware datetime
+            now = datetime.now(pytz.timezone('America/New_York'))
             time_preferences = request_payload.get("time_preferences", ["morning", "afternoon"])
             
             # Check if time_preferences contains natural language time expressions
@@ -3103,7 +3103,8 @@ def initialize_integrated_coordination_system(agent_config: Dict[str, Any] = Non
 
 def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str, 
                                  duration_minutes: int = 30, meeting_type: str = "1:1", 
-                                 attendees: List[str] = None, time_preference: str = None) -> bool:
+                                 attendees: List[str] = None, time_preference: str = None,
+                                 description: str = None) -> bool:
     """Send intelligent coordination request to target agent"""
     
     coordinator = initialize_integrated_coordination_system()
@@ -3117,7 +3118,7 @@ def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str
         duration_minutes=duration_minutes,
         attendees=attendees,
         subject=meeting_subject,
-        description=f"Intelligently coordinated {meeting_type} meeting"
+        description=description or f"Intelligently coordinated {meeting_type} meeting"
     )
     
     # Parse time preference if provided
