@@ -30,6 +30,20 @@ from calendar_functions import CalendarManager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ==================== TIMEZONE HELPERS ====================
+
+# Default timezone for the system
+DEFAULT_TIMEZONE = pytz.timezone('America/New_York')
+UTC = pytz.UTC
+
+def now_tz():
+    """Always return timezone-aware current time in default timezone"""
+    return datetime.now(DEFAULT_TIMEZONE)
+
+def now_utc():
+    """Always return timezone-aware UTC time for storage"""
+    return datetime.now(UTC)
+
 # ==================== ENHANCED PROTOCOL CLASSES ====================
 
 class MessageType(Enum):
@@ -277,7 +291,7 @@ class EmailTransportLayer:
         """Check for incoming coordination messages"""
         try:
             # Use time-based query instead of read status to prevent issues when humans open emails
-            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y/%m/%d')
+            yesterday = (now_tz() - timedelta(days=1)).strftime('%Y/%m/%d')
             query = f"subject:{self.AGENT_SUBJECT_PREFIX} after:{yesterday}"
             messages = self.gmail.get_messages(query=query, max_results=max_messages)
             
@@ -466,7 +480,7 @@ Protocol: {self.PROTOCOL_VERSION}
                 message_type=MessageType(tech_data.get('Message Type', 'coordination_ack')),
                 from_agent=from_agent,
                 to_agent_email=self.agent_identity.user_email,
-                timestamp=datetime.now(),  # Use current time as fallback
+                timestamp=now_tz(),  # Use current time as fallback
                 conversation_id=conversation_id,
                 payload=payload,
                 requires_response=requires_response,
@@ -1095,7 +1109,7 @@ Protocol: {self.PROTOCOL_VERSION}
                 processed_messages = data.get('processed_messages', {})
                 
                 # Load message IDs that aren't too old (within 30 days)
-                cutoff_date = datetime.now() - timedelta(days=30)
+                cutoff_date = now_tz() - timedelta(days=30)
                 current_ids = set()
                 
                 for message_id, timestamp_str in processed_messages.items():
@@ -1130,7 +1144,7 @@ Protocol: {self.PROTOCOL_VERSION}
         try:
             # Create data structure with timestamps
             processed_messages = {}
-            current_time = datetime.now().isoformat() + 'Z'
+            current_time = now_utc().isoformat()
             
             for message_id in self.processed_message_ids:
                 processed_messages[message_id] = current_time
@@ -1196,10 +1210,10 @@ class IntegratedCoordinationProtocol:
         """
         if not time_preference:
             # Default: next 7 days from now
-            now = datetime.now()
+            now = now_tz()
             return now, now + timedelta(days=7)
             
-        now = datetime.now()
+        now = now_tz()
         time_pref_lower = time_preference.lower()
         
         if time_pref_lower == "today":
@@ -1251,7 +1265,7 @@ class IntegratedCoordinationProtocol:
             message_type=MessageType.SCHEDULE_REQUEST,
             from_agent=self.agent_identity,
             to_agent_email=target_agent_email,
-            timestamp=datetime.now(),
+            timestamp=now_tz(),
             conversation_id="",
             payload=payload
         )
@@ -1369,7 +1383,7 @@ class IntegratedCoordinationProtocol:
                     message_type=MessageType.SCHEDULE_PROPOSAL,
                     from_agent=self.agent_identity,
                     to_agent_email=message.from_agent.user_email,
-                    timestamp=datetime.now(),
+                    timestamp=now_tz(),
                     conversation_id=message.conversation_id,
                     payload=payload
                 )
@@ -1475,7 +1489,7 @@ class IntegratedCoordinationProtocol:
                     message_type=MessageType.SCHEDULE_CONFIRMATION,
                     from_agent=self.agent_identity,
                     to_agent_email=message.from_agent.user_email,
-                    timestamp=datetime.now(),
+                    timestamp=now_tz(),
                     conversation_id=message.conversation_id,
                     payload=payload,
                     requires_response=False
@@ -1500,7 +1514,7 @@ class IntegratedCoordinationProtocol:
                     message_type=MessageType.SCHEDULE_CONFIRMATION,
                     from_agent=self.agent_identity,
                     to_agent_email=message.from_agent.user_email,
-                    timestamp=datetime.now(),
+                    timestamp=now_tz(),
                     conversation_id=message.conversation_id,
                     payload=payload,
                     requires_response=False
@@ -1574,7 +1588,7 @@ class IntegratedCoordinationProtocol:
                     message_type=MessageType.COORDINATION_ACK,
                     from_agent=self.agent_identity,
                     to_agent_email=message.from_agent.user_email,
-                    timestamp=datetime.now(),
+                    timestamp=now_tz(),
                     conversation_id=message.conversation_id,
                     payload=payload,
                     requires_response=False
@@ -1596,7 +1610,7 @@ class IntegratedCoordinationProtocol:
                     message_type=MessageType.COORDINATION_ACK,
                     from_agent=self.agent_identity,
                     to_agent_email=message.from_agent.user_email,
-                    timestamp=datetime.now(),
+                    timestamp=now_tz(),
                     conversation_id=message.conversation_id,
                     payload=payload,
                     requires_response=False
@@ -1676,7 +1690,7 @@ class IntegratedCoordinationProtocol:
                     message_type=MessageType.SCHEDULE_CONFIRMATION,
                     from_agent=self.agent_identity,
                     to_agent_email=message.from_agent.user_email,
-                    timestamp=datetime.now(),
+                    timestamp=now_tz(),
                     conversation_id=message.conversation_id,
                     payload=payload,
                     requires_response=False
@@ -1701,7 +1715,7 @@ class IntegratedCoordinationProtocol:
                             message_type=MessageType.SCHEDULE_COUNTER_PROPOSAL,
                             from_agent=self.agent_identity,
                             to_agent_email=message.from_agent.user_email,
-                            timestamp=datetime.now(),
+                            timestamp=now_tz(),
                             conversation_id=message.conversation_id,
                                     payload=payload
                         )
@@ -1746,7 +1760,7 @@ class IntegratedCoordinationProtocol:
                 message_type=MessageType.COORDINATION_ACK,
                 from_agent=self.agent_identity,
                 to_agent_email=message.from_agent.user_email,
-                timestamp=datetime.now(),
+                timestamp=now_tz(),
                 conversation_id=message.conversation_id,
                 payload=payload,
                 requires_response=False
@@ -1831,8 +1845,8 @@ class IntegratedCoordinationProtocol:
         """Find ALL available times that match criteria for 3-step protocol"""
         
         try:
-            # Parse time preferences for dynamic date range
-            now = datetime.now()
+            # Parse time preferences for dynamic date range - use timezone-aware datetime
+            now = datetime.now(pytz.timezone('America/New_York'))
             time_preferences = request_payload.get("time_preferences", ["morning", "afternoon"])
             
             # Check if time_preferences contains natural language time expressions
@@ -2104,13 +2118,13 @@ class IntegratedCoordinationProtocol:
                 # dateutil not available or parsing failed
                 logger.error(f"Unable to parse time string '{time_str}': {e}")
                 # Fallback to a reasonable default (tomorrow at 10 AM with timezone)
-                fallback = datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                fallback = now_tz().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
                 tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
                 tz = pytz.timezone(tz_str)
                 return tz.localize(fallback)
         
         logger.error(f"Invalid time format: {time_str}")
-        fallback = datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        fallback = now_tz().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
         tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
         tz = pytz.timezone(tz_str)
         return tz.localize(fallback)
@@ -2130,7 +2144,7 @@ class IntegratedCoordinationProtocol:
             except Exception as e:
                 logger.error(f"Failed to parse times from slot_data {slot_data}: {e}")
                 # Provide a reasonable fallback
-                start_time = datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                start_time = now_tz().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
                 end_time = start_time + timedelta(hours=1)
             
             # Ensure all optional fields have defaults
@@ -2165,7 +2179,7 @@ class IntegratedCoordinationProtocol:
         except Exception as e:
             logger.error(f"Critical error deserializing TimeSlot from {slot_data}: {e}")
             # Return a fallback TimeSlot to prevent crashes
-            fallback_start = datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            fallback_start = now_tz().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
             return TimeSlot(
                 start_time=fallback_start,
                 end_time=fallback_start + timedelta(hours=1),
@@ -2748,7 +2762,7 @@ class IntegratedCoordinationProtocol:
                 processed_messages = data.get('processed_messages', {})
                 
                 # Load message IDs that aren't too old (within 30 days)
-                cutoff_date = datetime.now() - timedelta(days=30)
+                cutoff_date = now_tz() - timedelta(days=30)
                 current_ids = set()
                 
                 for message_id, timestamp_str in processed_messages.items():
@@ -2783,7 +2797,7 @@ class IntegratedCoordinationProtocol:
         try:
             # Create data structure with timestamps
             processed_messages = {}
-            current_time = datetime.now().isoformat() + 'Z'
+            current_time = now_utc().isoformat()
             
             for message_id in self.processed_message_ids:
                 processed_messages[message_id] = current_time
@@ -2816,7 +2830,7 @@ class IntegratedCoordinationProtocol:
                 data = json.load(f)
             
             processed_messages = data.get('processed_messages', {})
-            cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+            cutoff_date = now_tz() - timedelta(days=days_to_keep)
             
             # Filter out old entries
             updated_messages = {}
@@ -2834,7 +2848,7 @@ class IntegratedCoordinationProtocol:
             
             # Save cleaned data
             data['processed_messages'] = updated_messages
-            data['last_cleanup'] = datetime.now().isoformat() + 'Z'
+            data['last_cleanup'] = now_utc().isoformat()
             
             with open(self.processed_messages_file, 'w') as f:
                 json.dump(data, f, indent=2)
@@ -3026,7 +3040,7 @@ class IntegratedCoordinationProtocol:
             message_type=MessageType.SCHEDULE_REJECTION,
             from_agent=self.agent_identity,
             to_agent_email=original_message.from_agent.user_email,
-            timestamp=datetime.now(),
+            timestamp=now_tz(),
             conversation_id=original_message.conversation_id,
             payload=payload,
             requires_response=False
