@@ -1334,8 +1334,8 @@ class IntegratedCoordinationProtocol:
             original_request = self._find_original_request_in_conversation(conversation)
             
             if not original_request:
-                logger.error("Cannot find original request in conversation")
-                return self._create_rejection_message(message, "Cannot locate the original meeting request in our conversation history, making it impossible to process this proposal properly")
+                logger.warning("No original request found - handling as reverse-initiated proposal")
+                return self._handle_reverse_proposal(message, proposed_times)
             
             meeting_context = MeetingContext(**original_request.payload["meeting_context"])
             
@@ -2523,6 +2523,108 @@ class IntegratedCoordinationProtocol:
             if message.message_type == MessageType.SCHEDULE_REQUEST:
                 return message
         return None
+    
+    def _handle_reverse_proposal(self, message: CoordinationMessage, proposed_times: List[TimeSlot]) -> Optional[CoordinationMessage]:
+        """Handle proposals received without original requests (reverse-initiated coordination)
+        
+        When another agent sends a proposal without first sending a request, we need to:
+        1. Extract meeting context from whatever information is available
+        2. Create a reasonable meeting context for scheduling
+        3. Find mutual availability and respond appropriately
+        """
+        logger.info(f"Handling reverse proposal from {message.from_agent.agent_id} with {len(proposed_times)} time slots")
+        
+        try:
+            # Extract meeting context from available information
+            meeting_context = self._extract_meeting_context_from_proposal(message, proposed_times)
+            
+            # Create a synthetic request payload for time finding
+            request_payload = {
+                'time_preferences': ['morning', 'afternoon'],
+                'meeting_context': {
+                    'subject': meeting_context.subject,
+                    'duration_minutes': meeting_context.duration_minutes,
+                    'attendees': meeting_context.attendees,
+                    'description': meeting_context.description,
+                    'meeting_type': meeting_context.meeting_type
+                }
+            }
+            
+            # Find our available times using the synthetic context
+            our_available_times = self._find_all_available_times(meeting_context, request_payload)
+            
+            # Find mutual times between their proposal and our availability
+            mutual_times = self._find_mutual_availability(proposed_times, our_available_times)
+            
+            if len(mutual_times) == 0:
+                # No mutual times available
+                logger.info("No mutual availability found for reverse proposal")
+                return self._create_no_mutual_time_message(message, proposed_times, our_available_times)
+            
+            elif len(mutual_times) == 1:
+                # Exactly one mutual time - schedule it directly
+                logger.info("Found exactly one mutual time for reverse proposal - scheduling directly")
+                best_time = mutual_times[0]
+                
+                # Create calendar event
+                event_created = self._create_calendar_event(best_time, meeting_context)
+                if event_created:
+                    return self._create_confirmation_message(message, best_time, meeting_context)
+                else:
+                    return self._create_rejection_message(message, "Failed to create calendar event for the selected time")
+            
+            else:
+                # Multiple mutual times - propose the best one
+                logger.info(f"Found {len(mutual_times)} mutual times for reverse proposal - proposing best option")
+                best_time = mutual_times[0]  # Take the highest scored time
+                
+                return self._create_counter_proposal_message(message, [best_time], meeting_context)
+                
+        except Exception as e:
+            logger.error(f"Error handling reverse proposal: {e}")
+            return self._create_rejection_message(message, "Unable to process your meeting proposal - please try again with more specific details")
+    
+    def _extract_meeting_context_from_proposal(self, message: CoordinationMessage, proposed_times: List[TimeSlot]) -> MeetingContext:
+        """Extract meeting context from proposal message when no original request exists"""
+        
+        # Extract basic info from message
+        attendees = [self.agent_identity.user_email, message.from_agent.user_email]
+        
+        # Infer duration from proposed time slots if available
+        duration_minutes = 30  # Default
+        if proposed_times:
+            # Calculate duration from first time slot
+            first_slot = proposed_times[0]
+            duration_delta = first_slot.end_time - first_slot.start_time
+            duration_minutes = int(duration_delta.total_seconds() / 60)
+        
+        # Try to extract subject from email subject or conversation
+        subject = "Coordination Meeting"  # Default
+        
+        # Check if there's any context in the message payload
+        if message.payload and 'context_analysis' in message.payload:
+            context = message.payload['context_analysis']
+            if isinstance(context, dict) and 'meeting_purpose' in context:
+                subject = context['meeting_purpose']
+        
+        # Check conversation threading for subject hints
+        conversation = self.active_conversations.get(message.conversation_id, [])
+        if conversation:
+            for msg in conversation:
+                # Look for subject hints in any previous messages
+                if hasattr(msg, 'payload') and msg.payload and 'meeting_context' in msg.payload:
+                    ctx = msg.payload['meeting_context']
+                    if isinstance(ctx, dict) and 'subject' in ctx:
+                        subject = ctx['subject']
+                        break
+        
+        return MeetingContext(
+            meeting_type="coordination_meeting",
+            duration_minutes=duration_minutes,
+            attendees=attendees,
+            subject=subject,
+            description=f"Meeting coordinated between {message.from_agent.user_name} and {self.agent_identity.user_name}"
+        )
     
     def _find_mutual_availability(self, proposed_times: List[TimeSlot], 
                                 our_available_times: List[TimeSlot]) -> List[TimeSlot]:
