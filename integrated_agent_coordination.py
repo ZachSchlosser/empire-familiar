@@ -287,7 +287,10 @@ class EmailTransportLayer:
         
         # Generate comprehensive human-readable content
         
-        # Create email body - primarily human readable with minimal technical data
+        # Create structured payload data for machine processing
+        structured_payload = self._create_structured_payload_data(message)
+        
+        # Create email body - human readable summary + complete technical data
         email_body = f"""
 {human_summary}
 
@@ -297,9 +300,50 @@ Conversation: {message.conversation_id}
 From Agent: {self.agent_identity.agent_id}
 Message Type: {message.message_type.value}
 Protocol: {self.PROTOCOL_VERSION}
+{structured_payload}
 """
         
         return email_body.strip()
+    
+    def _create_structured_payload_data(self, message: CoordinationMessage) -> str:
+        """Create structured technical data section for complete payload transmission"""
+        import json
+        
+        structured_lines = []
+        
+        # Add structured payload data based on message type
+        if message.message_type == MessageType.SCHEDULE_PROPOSAL:
+            if 'proposed_times' in message.payload:
+                # Include ALL proposed time slots in structured format
+                proposed_times = message.payload['proposed_times']
+                structured_lines.append(f"Proposed Times Count: {len(proposed_times)}")
+                structured_lines.append("Proposed Times Data: " + json.dumps(proposed_times, default=str))
+                
+            if 'proposal_confidence' in message.payload:
+                structured_lines.append(f"Proposal Confidence: {message.payload['proposal_confidence']}")
+                
+        elif message.message_type == MessageType.SCHEDULE_REQUEST:
+            if 'meeting_context' in message.payload:
+                meeting_context = message.payload['meeting_context']
+                structured_lines.append("Meeting Context: " + json.dumps(meeting_context, default=str))
+                
+            if 'time_preferences' in message.payload:
+                structured_lines.append("Time Preferences: " + json.dumps(message.payload['time_preferences']))
+                
+        elif message.message_type == MessageType.SCHEDULE_CONFIRMATION:
+            if 'selected_time' in message.payload:
+                selected_time = message.payload['selected_time']
+                structured_lines.append("Selected Time: " + json.dumps(selected_time, default=str))
+                
+        elif message.message_type == MessageType.SCHEDULE_REJECTION:
+            if 'rejection_reason' in message.payload:
+                structured_lines.append(f"Rejection Reason: {message.payload['rejection_reason']}")
+        
+        # Return formatted structured data section
+        if structured_lines:
+            return "\n" + "\n".join(structured_lines)
+        else:
+            return ""
     
     def _parse_coordination_email(self, gmail_message: Dict[str, Any]) -> Optional[CoordinationMessage]:
         """Parse Gmail message into CoordinationMessage from human-readable format"""
@@ -326,8 +370,17 @@ Protocol: {self.PROTOCOL_VERSION}
                     key, value = line.split(':', 1)
                     tech_data[key.strip()] = value.strip()
             
-            # Extract payload from human-readable content
-            payload = self._extract_payload_from_human_content(human_content, tech_data.get('Message Type', ''))
+            # Extract payload from structured technical data first, fallback to human-readable content
+            payload = self._extract_payload_from_technical_data(tech_data, tech_data.get('Message Type', ''))
+            
+            # If no structured payload found, fallback to human-readable parsing
+            if not payload or not self._is_payload_complete(payload, tech_data.get('Message Type', '')):
+                logger.debug("Using fallback human-readable payload extraction")
+                human_payload = self._extract_payload_from_human_content(human_content, tech_data.get('Message Type', ''))
+                # Merge payloads, prioritizing technical data
+                for key, value in human_payload.items():
+                    if key not in payload:
+                        payload[key] = value
             
             # Parse from email headers for additional info
             headers = gmail_message['payload'].get('headers', [])
@@ -446,6 +499,76 @@ Protocol: {self.PROTOCOL_VERSION}
             logger.error(f"Error extracting payload from human content: {e}")
         
         return payload
+    
+    def _extract_payload_from_technical_data(self, tech_data: Dict[str, str], message_type: str) -> Dict[str, Any]:
+        """Extract payload data from structured technical data section"""
+        import json
+        payload = {}
+        
+        try:
+            if message_type == 'schedule_proposal':
+                # Extract structured proposed times data
+                if 'Proposed Times Data' in tech_data:
+                    try:
+                        proposed_times_json = tech_data['Proposed Times Data']
+                        proposed_times = json.loads(proposed_times_json)
+                        payload['proposed_times'] = proposed_times
+                        logger.info(f"Extracted {len(proposed_times)} time slots from structured data")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse proposed times JSON: {e}")
+                
+                if 'Proposal Confidence' in tech_data:
+                    try:
+                        payload['proposal_confidence'] = float(tech_data['Proposal Confidence'])
+                    except ValueError:
+                        pass
+                        
+            elif message_type == 'schedule_request':
+                if 'Meeting Context' in tech_data:
+                    try:
+                        meeting_context_json = tech_data['Meeting Context']
+                        meeting_context = json.loads(meeting_context_json)
+                        payload['meeting_context'] = meeting_context
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse meeting context JSON: {e}")
+                
+                if 'Time Preferences' in tech_data:
+                    try:
+                        time_prefs_json = tech_data['Time Preferences']
+                        time_preferences = json.loads(time_prefs_json)
+                        payload['time_preferences'] = time_preferences
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse time preferences JSON: {e}")
+                        
+            elif message_type == 'schedule_confirmation':
+                if 'Selected Time' in tech_data:
+                    try:
+                        selected_time_json = tech_data['Selected Time']
+                        selected_time = json.loads(selected_time_json)
+                        payload['selected_time'] = selected_time
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse selected time JSON: {e}")
+                        
+            elif message_type == 'schedule_rejection':
+                if 'Rejection Reason' in tech_data:
+                    payload['rejection_reason'] = tech_data['Rejection Reason']
+            
+        except Exception as e:
+            logger.error(f"Error extracting payload from technical data: {e}")
+        
+        return payload
+    
+    def _is_payload_complete(self, payload: Dict[str, Any], message_type: str) -> bool:
+        """Check if payload contains the essential data for the message type"""
+        if message_type == 'schedule_proposal':
+            return 'proposed_times' in payload and len(payload.get('proposed_times', [])) > 0
+        elif message_type == 'schedule_request':
+            return 'meeting_context' in payload
+        elif message_type == 'schedule_confirmation':
+            return 'selected_time' in payload
+        elif message_type == 'schedule_rejection':
+            return 'rejection_reason' in payload
+        return True  # For other message types, assume complete
     
     def _generate_human_summary(self, message: CoordinationMessage) -> str:
         """Generate comprehensive human-readable coordination message"""
@@ -617,33 +740,32 @@ Protocol: {self.PROTOCOL_VERSION}
             'subject': base_subject
         }
         
-        # Check if this is part of an existing conversation
+        # Generate consistent threading headers based on conversation ID
+        # This ensures both agents in the conversation use the same threading logic
         conv_id = message.conversation_id
-        if conv_id in self.conversation_threading:
-            conv_info = self.conversation_threading[conv_id]
+        
+        # Create consistent subject based on conversation content
+        if hasattr(message, 'payload') and message.payload:
+            if 'meeting_context' in message.payload:
+                ctx = message.payload['meeting_context']
+                if isinstance(ctx, dict) and 'subject' in ctx:
+                    meeting_subject = ctx['subject']
+                    threading_headers['subject'] = f"{self.AGENT_SUBJECT_PREFIX} {meeting_subject}"
+        
+        # For replies in existing conversations, use conversation ID to generate consistent headers
+        if message.message_type != MessageType.SCHEDULE_REQUEST:
+            # This is a response message - generate In-Reply-To based on conversation ID
+            # Create a deterministic "previous message ID" based on conversation ID
+            conv_hash = hashlib.md5(conv_id.encode()).hexdigest()[:8]
+            threading_headers['in_reply_to'] = f"<coord-{conv_id}-thread-{conv_hash}@coordination.agent>"
+            threading_headers['references'] = f"<coord-{conv_id}-thread-{conv_hash}@coordination.agent>"
             
-            # This is a reply in an existing conversation
-            if conv_info['message_ids']:
-                # Set In-Reply-To to the most recent message in the conversation
-                threading_headers['in_reply_to'] = conv_info['message_ids'][-1]
-                
-                # Set References to all previous messages in the conversation
-                threading_headers['references'] = ' '.join(conv_info['message_ids'])
-                
-                # Use consistent subject for the conversation thread
-                threading_headers['subject'] = conv_info['subject']
-            
-        else:
-            # This is the first message in a new conversation
-            # Extract meaningful subject from the coordination context
-            if hasattr(message, 'payload') and message.payload:
-                if 'meeting_context' in message.payload:
-                    ctx = message.payload['meeting_context']
-                    if isinstance(ctx, dict) and 'subject' in ctx:
-                        meeting_subject = ctx['subject']
-                        threading_headers['subject'] = f"{self.AGENT_SUBJECT_PREFIX} {meeting_subject}"
-            
-            # Initialize conversation threading info
+            # Use consistent subject for replies
+            if conv_id in self.conversation_threading:
+                threading_headers['subject'] = self.conversation_threading[conv_id]['subject']
+        
+        # Initialize/update conversation threading info for local tracking
+        if conv_id not in self.conversation_threading:
             self.conversation_threading[conv_id] = {
                 'message_ids': [],
                 'subject': threading_headers['subject'],
@@ -1327,17 +1449,28 @@ class IntegratedCoordinationProtocol:
         
         slots = []
         
-        # Define time blocks based on preferences
-        time_blocks = []
+        # Generate comprehensive time slots based on preferences with 30-minute intervals
+        time_ranges = []
         if "morning" in time_preferences:
-            time_blocks.extend([9, 10, 11])  # 9 AM, 10 AM, 11 AM
+            # Morning: 8 AM to 12 PM (8:00, 8:30, 9:00, 9:30, 10:00, 10:30, 11:00, 11:30)
+            time_ranges.extend([(8, 0), (8, 30), (9, 0), (9, 30), (10, 0), (10, 30), (11, 0), (11, 30)])
         if "afternoon" in time_preferences:
-            time_blocks.extend([14, 15, 16])  # 2 PM, 3 PM, 4 PM
+            # Afternoon: 1 PM to 6 PM (13:00, 13:30, 14:00, 14:30, 15:00, 15:30, 16:00, 16:30, 17:00, 17:30)
+            time_ranges.extend([(13, 0), (13, 30), (14, 0), (14, 30), (15, 0), (15, 30), (16, 0), (16, 30), (17, 0), (17, 30)])
         if "evening" in time_preferences:
-            time_blocks.extend([17, 18])  # 5 PM, 6 PM
+            # Evening: 6 PM to 8 PM (18:00, 18:30, 19:00, 19:30)
+            time_ranges.extend([(18, 0), (18, 30), (19, 0), (19, 30)])
         
-        for hour in time_blocks:
-            start_time = target_date.replace(hour=hour, minute=0, second=0, microsecond=0)
+        # If no specific preferences, use all time ranges (business hours)
+        if not time_ranges:
+            time_ranges.extend([
+                # Full business day coverage
+                (9, 0), (9, 30), (10, 0), (10, 30), (11, 0), (11, 30),
+                (13, 0), (13, 30), (14, 0), (14, 30), (15, 0), (15, 30), (16, 0), (16, 30)
+            ])
+        
+        for hour, minute in time_ranges:
+            start_time = target_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
             end_time = start_time + timedelta(minutes=meeting_context.duration_minutes)
             
             # Check for conflicts
