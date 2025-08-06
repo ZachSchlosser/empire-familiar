@@ -12,6 +12,7 @@ import base64
 import hashlib
 import time
 import re
+import pytz
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union, Tuple
 from dataclasses import dataclass, asdict
@@ -311,13 +312,20 @@ Protocol: {self.PROTOCOL_VERSION}
         
         structured_lines = []
         
+        # Debug logging
+        logger.info(f"Creating structured payload for message type: {message.message_type}")
+        logger.info(f"Payload keys available: {list(message.payload.keys())}")
+        
         # Add structured payload data based on message type
         if message.message_type == MessageType.SCHEDULE_PROPOSAL:
             if 'proposed_times' in message.payload:
                 # Include ALL proposed time slots in structured format
                 proposed_times = message.payload['proposed_times']
+                logger.info(f"Found proposed_times with {len(proposed_times)} slots")
                 structured_lines.append(f"Proposed Times Count: {len(proposed_times)}")
                 structured_lines.append("Proposed Times Data: " + json.dumps(proposed_times, default=str))
+            else:
+                logger.warning("No 'proposed_times' found in SCHEDULE_PROPOSAL payload")
                 
             if 'proposal_confidence' in message.payload:
                 structured_lines.append(f"Proposal Confidence: {message.payload['proposal_confidence']}")
@@ -341,8 +349,11 @@ Protocol: {self.PROTOCOL_VERSION}
         
         # Return formatted structured data section
         if structured_lines:
-            return "\n" + "\n".join(structured_lines)
+            result = "\n" + "\n".join(structured_lines)
+            logger.info(f"Generated structured data with {len(result)} characters")
+            return result
         else:
+            logger.warning("No structured data generated - returning empty string")
             return ""
     
     def _parse_coordination_email(self, gmail_message: Dict[str, Any]) -> Optional[CoordinationMessage]:
@@ -472,7 +483,10 @@ Protocol: {self.PROTOCOL_VERSION}
                             start_time, end_time = time_part.split(' - ', 1)
                             proposed_times.append({
                                 'start_time': start_time.strip(),
-                                'end_time': end_time.strip()
+                                'end_time': end_time.strip(),
+                                'confidence_score': 0.8,  # Default confidence for human-parsed times
+                                'conflicts': [],
+                                'context_score': {}
                             })
                 
                 if proposed_times:
@@ -482,7 +496,12 @@ Protocol: {self.PROTOCOL_VERSION}
                 for line in lines:
                     if line.startswith('• Confirmed Time:'):
                         confirmed_time = line.split(':', 1)[1].strip()
-                        payload['confirmed_time'] = {'start_time': confirmed_time}
+                        payload['confirmed_time'] = {
+                            'start_time': confirmed_time,
+                            'confidence_score': 0.9,  # High confidence for confirmed times
+                            'conflicts': [],
+                            'context_score': {}
+                        }
                     elif line.startswith('• Location:'):
                         payload.setdefault('meeting_details', {})['location'] = line.split(':', 1)[1].strip()
                     elif line.startswith('• Meeting Link:'):
@@ -501,9 +520,13 @@ Protocol: {self.PROTOCOL_VERSION}
         return payload
     
     def _extract_payload_from_technical_data(self, tech_data: Dict[str, str], message_type: str) -> Dict[str, Any]:
-        """Extract payload data from structured technical data section"""
+        """Extract payload data from structured technical data section with enhanced error handling"""
         import json
         payload = {}
+        
+        if not tech_data or not isinstance(tech_data, dict):
+            logger.warning("Technical data is empty or invalid")
+            return payload
         
         try:
             if message_type == 'schedule_proposal':
@@ -511,64 +534,200 @@ Protocol: {self.PROTOCOL_VERSION}
                 if 'Proposed Times Data' in tech_data:
                     try:
                         proposed_times_json = tech_data['Proposed Times Data']
-                        proposed_times = json.loads(proposed_times_json)
-                        payload['proposed_times'] = proposed_times
-                        logger.info(f"Extracted {len(proposed_times)} time slots from structured data")
+                        if proposed_times_json and proposed_times_json.strip():
+                            proposed_times = json.loads(proposed_times_json)
+                            if isinstance(proposed_times, list) and len(proposed_times) > 0:
+                                # Validate each time slot has required fields
+                                valid_times = []
+                                for i, time_slot in enumerate(proposed_times):
+                                    if isinstance(time_slot, dict) and 'start_time' in time_slot and 'end_time' in time_slot:
+                                        # Ensure required fields with defaults
+                                        time_slot.setdefault('confidence_score', 0.8)
+                                        time_slot.setdefault('conflicts', [])
+                                        time_slot.setdefault('context_score', {})
+                                        valid_times.append(time_slot)
+                                    else:
+                                        logger.warning(f"Invalid time slot at index {i}: {time_slot}")
+                                
+                                if valid_times:
+                                    payload['proposed_times'] = valid_times
+                                    logger.info(f"Extracted {len(valid_times)} valid time slots from structured data")
+                                else:
+                                    logger.warning("No valid time slots found in structured data")
+                            else:
+                                logger.warning("Proposed times JSON is not a valid list")
+                        else:
+                            logger.warning("Proposed Times Data is empty")
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse proposed times JSON: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing proposed times data: {e}")
                 
                 if 'Proposal Confidence' in tech_data:
                     try:
-                        payload['proposal_confidence'] = float(tech_data['Proposal Confidence'])
-                    except ValueError:
-                        pass
+                        confidence_value = tech_data['Proposal Confidence']
+                        if confidence_value and confidence_value.strip():
+                            payload['proposal_confidence'] = float(confidence_value)
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Invalid proposal confidence value: {e}")
                         
             elif message_type == 'schedule_request':
                 if 'Meeting Context' in tech_data:
                     try:
                         meeting_context_json = tech_data['Meeting Context']
-                        meeting_context = json.loads(meeting_context_json)
-                        payload['meeting_context'] = meeting_context
+                        if meeting_context_json and meeting_context_json.strip():
+                            meeting_context = json.loads(meeting_context_json)
+                            if isinstance(meeting_context, dict):
+                                payload['meeting_context'] = meeting_context
+                            else:
+                                logger.warning("Meeting context JSON is not a valid object")
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse meeting context JSON: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing meeting context: {e}")
                 
                 if 'Time Preferences' in tech_data:
                     try:
                         time_prefs_json = tech_data['Time Preferences']
-                        time_preferences = json.loads(time_prefs_json)
-                        payload['time_preferences'] = time_preferences
+                        if time_prefs_json and time_prefs_json.strip():
+                            time_preferences = json.loads(time_prefs_json)
+                            if isinstance(time_preferences, dict):
+                                payload['time_preferences'] = time_preferences
+                            else:
+                                logger.warning("Time preferences JSON is not a valid object")
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse time preferences JSON: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing time preferences: {e}")
                         
             elif message_type == 'schedule_confirmation':
                 if 'Selected Time' in tech_data:
                     try:
                         selected_time_json = tech_data['Selected Time']
-                        selected_time = json.loads(selected_time_json)
-                        payload['selected_time'] = selected_time
+                        if selected_time_json and selected_time_json.strip():
+                            selected_time = json.loads(selected_time_json)
+                            if isinstance(selected_time, dict) and 'start_time' in selected_time and 'end_time' in selected_time:
+                                # Ensure required fields with defaults
+                                selected_time.setdefault('confidence_score', 0.9)
+                                selected_time.setdefault('conflicts', [])
+                                selected_time.setdefault('context_score', {})
+                                payload['selected_time'] = selected_time
+                            else:
+                                logger.warning("Selected time JSON is not a valid time slot object")
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse selected time JSON: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing selected time: {e}")
                         
             elif message_type == 'schedule_rejection':
                 if 'Rejection Reason' in tech_data:
-                    payload['rejection_reason'] = tech_data['Rejection Reason']
+                    reason = tech_data['Rejection Reason']
+                    if reason and reason.strip():
+                        payload['rejection_reason'] = reason.strip()
             
         except Exception as e:
-            logger.error(f"Error extracting payload from technical data: {e}")
+            logger.error(f"Critical error extracting payload from technical data: {e}")
+            logger.error(f"Tech data: {tech_data}")
         
         return payload
     
     def _is_payload_complete(self, payload: Dict[str, Any], message_type: str) -> bool:
-        """Check if payload contains the essential data for the message type"""
-        if message_type == 'schedule_proposal':
-            return 'proposed_times' in payload and len(payload.get('proposed_times', [])) > 0
-        elif message_type == 'schedule_request':
-            return 'meeting_context' in payload
-        elif message_type == 'schedule_confirmation':
-            return 'selected_time' in payload
-        elif message_type == 'schedule_rejection':
-            return 'rejection_reason' in payload
-        return True  # For other message types, assume complete
+        """Check if payload contains the essential data for the message type with enhanced validation"""
+        try:
+            if not payload or not isinstance(payload, dict):
+                logger.debug(f"Payload is empty or invalid for {message_type}")
+                return False
+            
+            if message_type == 'schedule_proposal':
+                # Check for proposed_times
+                if 'proposed_times' not in payload:
+                    logger.debug("Missing proposed_times in schedule_proposal payload")
+                    return False
+                
+                proposed_times = payload['proposed_times']
+                if not isinstance(proposed_times, list) or len(proposed_times) == 0:
+                    logger.debug("proposed_times is not a valid list or is empty")
+                    return False
+                
+                # Validate each time slot has the minimum required fields
+                for i, time_slot in enumerate(proposed_times):
+                    if not isinstance(time_slot, dict):
+                        logger.debug(f"Time slot {i} is not a dictionary")
+                        return False
+                    if 'start_time' not in time_slot or 'end_time' not in time_slot:
+                        logger.debug(f"Time slot {i} missing start_time or end_time")
+                        return False
+                
+                return True
+                
+            elif message_type == 'schedule_request':
+                if 'meeting_context' not in payload:
+                    logger.debug("Missing meeting_context in schedule_request payload")
+                    return False
+                
+                meeting_context = payload['meeting_context']
+                if not isinstance(meeting_context, dict):
+                    logger.debug("meeting_context is not a dictionary")
+                    return False
+                
+                return True
+                
+            elif message_type == 'schedule_confirmation':
+                if 'selected_time' not in payload:
+                    logger.debug("Missing selected_time in schedule_confirmation payload")
+                    return False
+                
+                selected_time = payload['selected_time']
+                if not isinstance(selected_time, dict):
+                    logger.debug("selected_time is not a dictionary")
+                    return False
+                
+                if 'start_time' not in selected_time or 'end_time' not in selected_time:
+                    logger.debug("selected_time missing start_time or end_time")
+                    return False
+                
+                return True
+                
+            elif message_type == 'schedule_rejection':
+                if 'rejection_reason' not in payload:
+                    logger.debug("Missing rejection_reason in schedule_rejection payload")
+                    return False
+                
+                reason = payload['rejection_reason']
+                if not isinstance(reason, str) or not reason.strip():
+                    logger.debug("rejection_reason is not a valid string")
+                    return False
+                
+                return True
+                
+            elif message_type == 'schedule_counter_proposal':
+                if 'counter_proposals' not in payload:
+                    logger.debug("Missing counter_proposals in schedule_counter_proposal payload")
+                    return False
+                
+                counter_proposals = payload['counter_proposals']
+                if not isinstance(counter_proposals, list) or len(counter_proposals) == 0:
+                    logger.debug("counter_proposals is not a valid list or is empty")
+                    return False
+                
+                # Validate each counter-proposal
+                for i, time_slot in enumerate(counter_proposals):
+                    if not isinstance(time_slot, dict):
+                        logger.debug(f"Counter-proposal {i} is not a dictionary")
+                        return False
+                    if 'start_time' not in time_slot or 'end_time' not in time_slot:
+                        logger.debug(f"Counter-proposal {i} missing start_time or end_time")
+                        return False
+                
+                return True
+            
+            # For other message types, assume complete but log
+            logger.debug(f"Unknown message type {message_type}, assuming payload is complete")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating payload completeness for {message_type}: {e}")
+            return False
     
     def _generate_human_summary(self, message: CoordinationMessage) -> str:
         """Generate comprehensive human-readable coordination message"""
@@ -726,7 +885,7 @@ Protocol: {self.PROTOCOL_VERSION}
         return summary.strip()
     
     def _generate_threading_headers(self, message: CoordinationMessage, base_subject: str) -> Dict[str, str]:
-        """Generate email threading headers for conversation continuity"""
+        """Generate email threading headers for proper Gmail conversation threading"""
         import socket
         import time
         
@@ -740,8 +899,6 @@ Protocol: {self.PROTOCOL_VERSION}
             'subject': base_subject
         }
         
-        # Generate consistent threading headers based on conversation ID
-        # This ensures both agents in the conversation use the same threading logic
         conv_id = message.conversation_id
         
         # Create consistent subject based on conversation content
@@ -752,26 +909,42 @@ Protocol: {self.PROTOCOL_VERSION}
                     meeting_subject = ctx['subject']
                     threading_headers['subject'] = f"{self.AGENT_SUBJECT_PREFIX} {meeting_subject}"
         
-        # For replies in existing conversations, use conversation ID to generate consistent headers
-        if message.message_type != MessageType.SCHEDULE_REQUEST:
-            # This is a response message - generate In-Reply-To based on conversation ID
-            # Create a deterministic "previous message ID" based on conversation ID
-            conv_hash = hashlib.md5(conv_id.encode()).hexdigest()[:8]
-            threading_headers['in_reply_to'] = f"<coord-{conv_id}-thread-{conv_hash}@coordination.agent>"
-            threading_headers['references'] = f"<coord-{conv_id}-thread-{conv_hash}@coordination.agent>"
-            
-            # Use consistent subject for replies
-            if conv_id in self.conversation_threading:
-                threading_headers['subject'] = self.conversation_threading[conv_id]['subject']
-        
-        # Initialize/update conversation threading info for local tracking
+        # Initialize conversation threading info if not exists
         if conv_id not in self.conversation_threading:
             self.conversation_threading[conv_id] = {
                 'message_ids': [],
                 'subject': threading_headers['subject'],
                 'participants': [self.agent_identity.user_email, message.to_agent_email],
-                'thread_id': None  # Will be set when first message is sent
+                'thread_id': None,
+                'latest_message_id': None  # Track latest actual Gmail message ID for proper threading
             }
+        
+        # For replies in existing conversations, use ACTUAL Gmail message IDs for proper threading
+        if message.message_type != MessageType.SCHEDULE_REQUEST:
+            conv_info = self.conversation_threading[conv_id]
+            
+            # Use the latest actual Gmail message ID for In-Reply-To (proper threading)
+            if conv_info.get('latest_message_id'):
+                # Extract the actual Message-ID header from Gmail format
+                latest_msg_id = conv_info['latest_message_id']
+                threading_headers['in_reply_to'] = latest_msg_id
+                
+                # Build References chain with all previous message IDs
+                if conv_info['message_ids']:
+                    # Use actual Gmail message IDs for References header
+                    references = ' '.join(conv_info['message_ids'][-5:])  # Last 5 for manageability
+                    if latest_msg_id not in references:
+                        references += f' {latest_msg_id}'
+                    threading_headers['references'] = references
+                else:
+                    threading_headers['references'] = latest_msg_id
+                    
+                logger.debug(f"Threading reply to latest message: {latest_msg_id}")
+            else:
+                logger.warning(f"No latest message ID found for conversation {conv_id}, this may create a new thread")
+            
+            # Use consistent subject for replies
+            threading_headers['subject'] = conv_info['subject']
         
         return threading_headers
     
@@ -785,12 +958,17 @@ Protocol: {self.PROTOCOL_VERSION}
                 'message_ids': [],
                 'subject': f"{self.AGENT_SUBJECT_PREFIX} Coordination",
                 'participants': [self.agent_identity.user_email, message.to_agent_email],
-                'thread_id': None
+                'thread_id': None,
+                'latest_message_id': None
             }
         
         # Add this message to the conversation thread
         conv_info = self.conversation_threading[conv_id] 
         conv_info['message_ids'].append(message_id)
+        
+        # CRITICAL: Update latest_message_id to the ACTUAL Message-ID header for proper threading
+        conv_info['latest_message_id'] = message_id
+        logger.debug(f"Updated latest message ID for conversation {conv_id}: {message_id}")
         
         # Store thread_id when we get it (first message in conversation)
         if thread_id and not conv_info['thread_id']:
@@ -828,7 +1006,8 @@ Protocol: {self.PROTOCOL_VERSION}
                 'message_ids': [],
                 'subject': f"{self.AGENT_SUBJECT_PREFIX} Coordination", 
                 'participants': [self.agent_identity.user_email],
-                'thread_id': None
+                'thread_id': None,
+                'latest_message_id': None
             }
         
         conv_info = self.conversation_threading[conversation_id]
@@ -836,6 +1015,10 @@ Protocol: {self.PROTOCOL_VERSION}
         # Add the received message ID to the conversation thread
         if message_id not in conv_info['message_ids']:
             conv_info['message_ids'].append(message_id)
+            
+        # CRITICAL: Update latest_message_id when receiving messages for proper reply threading
+        conv_info['latest_message_id'] = message_id
+        logger.debug(f"Updated latest received message ID for conversation {conversation_id}: {message_id}")
         
         # Add sender to participants if not already included
         if from_email and from_email not in conv_info['participants']:
@@ -1001,8 +1184,16 @@ class IntegratedCoordinationProtocol:
             # Parse meeting context with proper enum handling
             context_data = message.payload["meeting_context"].copy()
             
+            # Filter context_data to only include valid MeetingContext fields
+            valid_fields = {'meeting_type', 'duration_minutes', 'attendees', 'subject', 'description', 'energy_requirement', 'requires_preparation'}
+            filtered_context = {k: v for k, v in context_data.items() if k in valid_fields}
             
-            meeting_context = MeetingContext(**context_data)
+            # Set defaults for required fields if missing
+            if 'attendees' not in filtered_context:
+                filtered_context['attendees'] = [message.from_agent.user_email, self.agent_identity.user_email]
+            
+            logger.info(f"Creating MeetingContext with fields: {list(filtered_context.keys())}")
+            meeting_context = MeetingContext(**filtered_context)
             time_preferences = message.payload.get("time_preferences", ["morning", "afternoon"])
             
             # Find ALL available times that match criteria (Step 2 of 3-step protocol)
@@ -1056,8 +1247,39 @@ class IntegratedCoordinationProtocol:
         logger.info(f"Processing schedule proposal from {message.from_agent.agent_id}")
         
         try:
-            proposed_times = [self._deserialize_timeslot(slot_data) 
-                             for slot_data in message.payload["proposed_times"]]
+            # Validate payload structure first
+            if not message.payload or "proposed_times" not in message.payload:
+                logger.error("Schedule proposal missing proposed_times in payload")
+                return self._create_rejection_message(message, "Invalid proposal format - missing time options")
+            
+            proposed_times_data = message.payload["proposed_times"]
+            if not isinstance(proposed_times_data, list) or len(proposed_times_data) == 0:
+                logger.error("Schedule proposal has invalid or empty proposed_times")
+                return self._create_rejection_message(message, "Invalid proposal format - no time options provided")
+            
+            # Deserialize time slots with individual error handling
+            proposed_times = []
+            for i, slot_data in enumerate(proposed_times_data):
+                try:
+                    if slot_data is None:
+                        logger.warning(f"Skipping null time slot at index {i}")
+                        continue
+                    
+                    timeslot = self._deserialize_timeslot(slot_data)
+                    if timeslot:  # Only add valid timeslots
+                        proposed_times.append(timeslot)
+                        logger.debug(f"Successfully parsed time slot {i}: {timeslot.start_time} - {timeslot.end_time}")
+                    else:
+                        logger.warning(f"Failed to deserialize time slot at index {i}: {slot_data}")
+                        
+                except Exception as e:
+                    logger.error(f"Error deserializing time slot {i} from {slot_data}: {e}")
+                    # Continue with other slots instead of failing completely
+                    continue
+            
+            if not proposed_times:
+                logger.error("No valid time slots could be parsed from proposal")
+                return self._create_rejection_message(message, "Unable to parse any valid time options from your proposal")
             
             # Get original request context for finding ALL our available times
             conversation = self.active_conversations.get(message.conversation_id, [])
@@ -1142,11 +1364,23 @@ class IntegratedCoordinationProtocol:
         
         try:
             # Validate message payload
-            if "selected_time" not in message.payload:
+            if not message.payload or "selected_time" not in message.payload:
                 logger.error("Schedule confirmation missing selected_time in payload")
                 return None
             
-            confirmed_time = self._deserialize_timeslot(message.payload["selected_time"])
+            selected_time_data = message.payload["selected_time"]
+            if not selected_time_data:
+                logger.error("Schedule confirmation has null selected_time")
+                return None
+            
+            try:
+                confirmed_time = self._deserialize_timeslot(selected_time_data)
+                if not confirmed_time:
+                    logger.error("Failed to deserialize confirmed time from selected_time data")
+                    return None
+            except Exception as e:
+                logger.error(f"Error deserializing confirmed time: {e}")
+                return None
             logger.info(f"Confirmed meeting time: {confirmed_time.start_time} - {confirmed_time.end_time}")
             
             # Prepare proper event details with both agents as attendees
@@ -1225,8 +1459,39 @@ class IntegratedCoordinationProtocol:
         logger.info(f"Processing schedule counter-proposal from {message.from_agent.agent_id}")
         
         try:
-            counter_proposals = [self._deserialize_timeslot(slot_data) 
-                               for slot_data in message.payload["counter_proposals"]]
+            # Validate payload structure first
+            if not message.payload or "counter_proposals" not in message.payload:
+                logger.error("Schedule counter-proposal missing counter_proposals in payload")
+                return self._create_rejection_message(message, "Invalid counter-proposal format - missing time options")
+            
+            counter_proposals_data = message.payload["counter_proposals"]
+            if not isinstance(counter_proposals_data, list) or len(counter_proposals_data) == 0:
+                logger.error("Schedule counter-proposal has invalid or empty counter_proposals")
+                return self._create_rejection_message(message, "Invalid counter-proposal format - no time options provided")
+            
+            # Deserialize counter-proposals with individual error handling
+            counter_proposals = []
+            for i, slot_data in enumerate(counter_proposals_data):
+                try:
+                    if slot_data is None:
+                        logger.warning(f"Skipping null counter-proposal slot at index {i}")
+                        continue
+                    
+                    timeslot = self._deserialize_timeslot(slot_data)
+                    if timeslot:  # Only add valid timeslots
+                        counter_proposals.append(timeslot)
+                        logger.debug(f"Successfully parsed counter-proposal slot {i}: {timeslot.start_time} - {timeslot.end_time}")
+                    else:
+                        logger.warning(f"Failed to deserialize counter-proposal slot at index {i}: {slot_data}")
+                        
+                except Exception as e:
+                    logger.error(f"Error deserializing counter-proposal slot {i} from {slot_data}: {e}")
+                    # Continue with other slots instead of failing completely
+                    continue
+            
+            if not counter_proposals:
+                logger.error("No valid counter-proposal time slots could be parsed")
+                return self._create_rejection_message(message, "Unable to parse any valid time options from your counter-proposal")
             
             # Evaluate counter-proposals with contextual intelligence
             best_option = self._evaluate_proposals_intelligently(counter_proposals)
@@ -1471,6 +1736,14 @@ class IntegratedCoordinationProtocol:
         
         for hour, minute in time_ranges:
             start_time = target_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            
+            # Ensure timezone consistency - use the agent's configured timezone
+            if start_time.tzinfo is None:
+                # Get timezone from preferences or default to Eastern
+                tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
+                tz = pytz.timezone(tz_str)
+                start_time = tz.localize(start_time)
+            
             end_time = start_time + timedelta(minutes=meeting_context.duration_minutes)
             
             # Check for conflicts
@@ -1607,38 +1880,111 @@ class IntegratedCoordinationProtocol:
         }
     
     def _parse_time_string(self, time_str: Union[str, datetime]) -> datetime:
-        """Parse time string from either ISO format or human-readable format"""
+        """Parse time string from either ISO format or human-readable format with timezone handling"""
         if isinstance(time_str, datetime):
+            # If already a datetime, ensure it has timezone info
+            if time_str.tzinfo is None:
+                # Default to agent's timezone
+                tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
+                tz = pytz.timezone(tz_str)
+                time_str = tz.localize(time_str)
             return time_str
         
         if isinstance(time_str, str):
             # Try ISO format first
             try:
-                return datetime.fromisoformat(time_str)
+                parsed_time = datetime.fromisoformat(time_str)
+                # Ensure timezone info is preserved/added
+                if parsed_time.tzinfo is None:
+                    tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
+                    tz = pytz.timezone(tz_str)
+                    parsed_time = tz.localize(parsed_time)
+                return parsed_time
             except ValueError:
                 pass
             
             # Try human-readable formats with dateutil if available
             try:
-                return dateutil.parser.parse(time_str)
+                parsed_time = dateutil.parser.parse(time_str)
+                # Ensure timezone info
+                if parsed_time.tzinfo is None:
+                    tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
+                    tz = pytz.timezone(tz_str)
+                    parsed_time = tz.localize(parsed_time)
+                return parsed_time
             except (NameError, Exception) as e:
                 # dateutil not available or parsing failed
                 logger.error(f"Unable to parse time string '{time_str}': {e}")
-                # Fallback to a reasonable default (tomorrow at 10 AM)
-                return datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                # Fallback to a reasonable default (tomorrow at 10 AM with timezone)
+                fallback = datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
+                tz = pytz.timezone(tz_str)
+                return tz.localize(fallback)
         
         logger.error(f"Invalid time format: {time_str}")
-        return datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        fallback = datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
+        tz = pytz.timezone(tz_str)
+        return tz.localize(fallback)
 
     def _deserialize_timeslot(self, slot_data: Dict[str, Any]) -> TimeSlot:
-        """Deserialize TimeSlot from message data"""
-        return TimeSlot(
-            start_time=self._parse_time_string(slot_data["start_time"]),
-            end_time=self._parse_time_string(slot_data["end_time"]),
-            confidence_score=slot_data.get("confidence_score", 0.8),  # Default confidence for human-parsed times
-            conflicts=slot_data.get("conflicts", []),
-            context_score=slot_data.get("context_score", {})
-        )
+        """Deserialize TimeSlot from message data with comprehensive error handling"""
+        try:
+            # Ensure required fields are present
+            if not slot_data or "start_time" not in slot_data or "end_time" not in slot_data:
+                logger.error(f"Missing required time fields in slot_data: {slot_data}")
+                raise ValueError("TimeSlot data must contain start_time and end_time")
+            
+            # Parse times with error handling
+            try:
+                start_time = self._parse_time_string(slot_data["start_time"])
+                end_time = self._parse_time_string(slot_data["end_time"])
+            except Exception as e:
+                logger.error(f"Failed to parse times from slot_data {slot_data}: {e}")
+                # Provide a reasonable fallback
+                start_time = datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                end_time = start_time + timedelta(hours=1)
+            
+            # Ensure all optional fields have defaults
+            confidence_score = slot_data.get("confidence_score", 0.8)
+            conflicts = slot_data.get("conflicts", [])
+            context_score = slot_data.get("context_score", {})
+            
+            # Validate types and ranges
+            if not isinstance(confidence_score, (int, float)):
+                logger.warning(f"Invalid confidence_score type: {type(confidence_score)}, using default")
+                confidence_score = 0.8
+            elif not (0.0 <= confidence_score <= 1.0):
+                logger.warning(f"Confidence score {confidence_score} out of range, clamping to [0,1]")
+                confidence_score = max(0.0, min(1.0, confidence_score))
+            
+            if not isinstance(conflicts, list):
+                logger.warning(f"Invalid conflicts type: {type(conflicts)}, using empty list")
+                conflicts = []
+            
+            if not isinstance(context_score, dict):
+                logger.warning(f"Invalid context_score type: {type(context_score)}, using empty dict")
+                context_score = {}
+            
+            return TimeSlot(
+                start_time=start_time,
+                end_time=end_time,
+                confidence_score=float(confidence_score),
+                conflicts=conflicts,
+                context_score=context_score
+            )
+            
+        except Exception as e:
+            logger.error(f"Critical error deserializing TimeSlot from {slot_data}: {e}")
+            # Return a fallback TimeSlot to prevent crashes
+            fallback_start = datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            return TimeSlot(
+                start_time=fallback_start,
+                end_time=fallback_start + timedelta(hours=1),
+                confidence_score=0.1,  # Low confidence for fallback
+                conflicts=["Parse error - using fallback time"],
+                context_score={"fallback": True}
+            )
     
     def _get_current_constraints(self) -> Dict[str, Any]:
         """Get current scheduling constraints"""
@@ -2101,39 +2447,103 @@ class IntegratedCoordinationProtocol:
     def _find_mutual_availability(self, proposed_times: List[TimeSlot], 
                                 our_available_times: List[TimeSlot]) -> List[TimeSlot]:
         """Find mutual availability between proposed times and our availability"""
+        logger.info(f"🔍 DEBUGGING MUTUAL AVAILABILITY DETECTION")
+        logger.info(f"📋 Comparing {len(proposed_times)} proposed times with {len(our_available_times)} available times")
+        
+        # Log all proposed times with detailed info
+        logger.info(f"🎯 PROPOSED TIMES:")
+        for i, slot in enumerate(proposed_times):
+            logger.info(f"  Proposed {i+1}: {slot.start_time} to {slot.end_time}")
+            logger.info(f"    - Raw start: {slot.start_time} (tz: {slot.start_time.tzinfo})")
+            logger.info(f"    - Raw end: {slot.end_time} (tz: {slot.end_time.tzinfo})")
+            logger.info(f"    - Formatted: {slot.start_time.strftime('%A, %B %d at %I:%M %p')}")
+            logger.info(f"    - ISO format: {slot.start_time.isoformat()}")
+        
+        # Log all our available times with detailed info
+        logger.info(f"✅ OUR AVAILABLE TIMES:")
+        for i, slot in enumerate(our_available_times):
+            logger.info(f"  Available {i+1}: {slot.start_time} to {slot.end_time}")
+            logger.info(f"    - Raw start: {slot.start_time} (tz: {slot.start_time.tzinfo})")
+            logger.info(f"    - Raw end: {slot.end_time} (tz: {slot.end_time.tzinfo})")
+            logger.info(f"    - Formatted: {slot.start_time.strftime('%A, %B %d at %I:%M %p')}")
+            logger.info(f"    - ISO format: {slot.start_time.isoformat()}")
+        
         mutual_times = []
         
-        for proposed_slot in proposed_times:
-            for our_slot in our_available_times:
+        for p_idx, proposed_slot in enumerate(proposed_times):
+            logger.info(f"🔍 Checking proposed slot {p_idx+1}: {proposed_slot.start_time.strftime('%A, %B %d at %I:%M %p')}")
+            
+            for a_idx, our_slot in enumerate(our_available_times):
+                logger.info(f"  ⚖️ Comparing with available slot {a_idx+1}: {our_slot.start_time.strftime('%A, %B %d at %I:%M %p')}")
+                
                 # Check if times overlap significantly (allowing for small differences)
                 proposed_start = proposed_slot.start_time
                 proposed_end = proposed_slot.end_time
                 our_start = our_slot.start_time
                 our_end = our_slot.end_time
                 
+                # Log the exact datetime objects being compared
+                logger.info(f"    📅 Proposed: {proposed_start} to {proposed_end}")
+                logger.info(f"    📅 Available: {our_start} to {our_end}")
+                
+                # Normalize timezones for comparison if they differ
+                if proposed_start.tzinfo != our_start.tzinfo:
+                    logger.info(f"    ⚠️ Timezone mismatch: {proposed_start.tzinfo} vs {our_start.tzinfo}")
+                    # Convert both to UTC for comparison
+                    proposed_start_utc = proposed_start.astimezone(pytz.UTC)
+                    proposed_end_utc = proposed_end.astimezone(pytz.UTC)
+                    our_start_utc = our_start.astimezone(pytz.UTC)
+                    our_end_utc = our_end.astimezone(pytz.UTC)
+                    logger.info(f"    🌍 UTC Proposed: {proposed_start_utc} to {proposed_end_utc}")
+                    logger.info(f"    🌍 UTC Available: {our_start_utc} to {our_end_utc}")
+                    
+                    # Use UTC times for comparison
+                    proposed_start = proposed_start_utc
+                    proposed_end = proposed_end_utc
+                    our_start = our_start_utc
+                    our_end = our_end_utc
+                
                 # Allow 15-minute tolerance for small time differences
                 tolerance = timedelta(minutes=15)
+                logger.info(f"    ⏰ Using tolerance: {tolerance}")
                 
                 # Check if there's significant overlap
                 overlap_start = max(proposed_start, our_start)
                 overlap_end = min(proposed_end, our_end)
+                
+                logger.info(f"    🔄 Overlap calculation:")
+                logger.info(f"      - Overlap start: max({proposed_start}, {our_start}) = {overlap_start}")
+                logger.info(f"      - Overlap end: min({proposed_end}, {our_end}) = {overlap_end}")
                 
                 if overlap_end > overlap_start:
                     # There's overlap - check if it's substantial enough
                     overlap_duration = overlap_end - overlap_start
                     required_duration = proposed_end - proposed_start
                     
+                    logger.info(f"    ✅ Overlap detected!")
+                    logger.info(f"      - Overlap duration: {overlap_duration}")
+                    logger.info(f"      - Required duration: {required_duration}")
+                    logger.info(f"      - Minimum needed: {required_duration - tolerance}")
+                    
                     if overlap_duration >= required_duration - tolerance:
-                        # Use the more precise time (our time) with their duration
+                        logger.info(f"    🎉 MATCH FOUND! Overlap is sufficient")
+                        # Use the original times (not UTC converted) for the result
                         mutual_slot = TimeSlot(
-                            start_time=our_start,
-                            end_time=our_start + (proposed_end - proposed_start),
+                            start_time=proposed_slot.start_time,  # Use original proposed time
+                            end_time=proposed_slot.end_time,      # Use original proposed time
                             confidence_score=our_slot.confidence_score,
                             conflicts=our_slot.conflicts,
                             context_score=our_slot.context_score
                         )
                         mutual_times.append(mutual_slot)
+                        logger.info(f"    📝 Added mutual slot: {mutual_slot.start_time} to {mutual_slot.end_time}")
                         break  # Found a match for this proposed time
+                    else:
+                        logger.info(f"    ❌ Insufficient overlap: {overlap_duration} < {required_duration - tolerance}")
+                else:
+                    logger.info(f"    ❌ No overlap: overlap_end ({overlap_end}) <= overlap_start ({overlap_start})")
+        
+        logger.info(f"🔍 Initial mutual times found: {len(mutual_times)}")
         
         # Remove duplicates and sort by confidence score
         seen_times = set()
@@ -2144,8 +2554,15 @@ class IntegratedCoordinationProtocol:
             if time_key not in seen_times:
                 seen_times.add(time_key)
                 unique_mutual_times.append(slot)
+            else:
+                logger.info(f"    🔄 Removing duplicate: {slot.start_time} to {slot.end_time}")
         
         unique_mutual_times.sort(key=lambda x: x.confidence_score, reverse=True)
+        
+        logger.info(f"📊 FINAL RESULT: {len(unique_mutual_times)} unique mutual times found")
+        for i, slot in enumerate(unique_mutual_times):
+            logger.info(f"  Final {i+1}: {slot.start_time.strftime('%A, %B %d at %I:%M %p')} (confidence: {slot.confidence_score})")
+        
         return unique_mutual_times
     
     def _create_no_mutual_time_message(self, original_message: CoordinationMessage, 

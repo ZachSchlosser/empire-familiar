@@ -221,7 +221,7 @@ class GmailManager:
     
     def reply_to_message(self, message_id, reply_body):
         """
-        Reply to a specific message.
+        Reply to a specific message with proper Gmail threading.
         
         Args:
             message_id (str): ID of message to reply to
@@ -242,15 +242,33 @@ class GmailManager:
             subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'No Subject')
             from_email = next((h['value'] for h in headers if h['name'].lower() == 'from'), '')
             to_email = next((h['value'] for h in headers if h['name'].lower() == 'to'), '')
+            original_message_id = next((h['value'] for h in headers if h['name'].lower() == 'message-id'), '')
+            references = next((h['value'] for h in headers if h['name'].lower() == 'references'), '')
             
-            # Create reply
+            # Create reply subject
             reply_subject = f"Re: {subject}" if not subject.startswith('Re:') else subject
             
-            # Send reply
+            # Build proper threading headers for Gmail reply chain
+            threading_headers = {}
+            
+            # Set In-Reply-To to the original message's Message-ID
+            if original_message_id:
+                threading_headers['in_reply_to'] = original_message_id
+                
+                # Build References header chain
+                if references:
+                    # Append original message ID to existing references
+                    threading_headers['references'] = f"{references} {original_message_id}"
+                else:
+                    # Start references chain with original message ID
+                    threading_headers['references'] = original_message_id
+            
+            # Send reply with proper threading headers
             return self.send_email(
                 to_email=from_email,
                 subject=reply_subject,
-                body=reply_body
+                body=reply_body,
+                threading_headers=threading_headers
             )
         
         except Exception as e:
