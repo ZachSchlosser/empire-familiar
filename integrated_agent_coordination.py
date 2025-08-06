@@ -179,7 +179,9 @@ class EmailTransportLayer:
         self.conversation_threading: Dict[str, Dict[str, Any]] = {}
         
         # Message tracking to prevent duplicate processing
+        self.processed_messages_file = "processed_messages.json"
         self.processed_message_ids: set = set()
+        self._load_processed_message_ids()
         # conversation_id -> {
         #   'message_ids': [list of message IDs in order],
         #   'subject': 'conversation subject',
@@ -273,6 +275,8 @@ class EmailTransportLayer:
             
             if coordination_messages:
                 logger.info(f"Found {len(coordination_messages)} new coordination messages")
+                # Save processed message IDs to persistent storage
+                self._save_processed_message_ids()
             
             return coordination_messages
             
@@ -1046,6 +1050,74 @@ Protocol: {self.PROTOCOL_VERSION}
         except Exception as e:
             logger.error(f"Error archiving conversation thread {conversation_id}: {e}")
             return False
+    
+    def _load_processed_message_ids(self):
+        """Load processed message IDs from persistent JSON storage"""
+        import json
+        import os
+        from datetime import datetime, timedelta
+        
+        try:
+            if os.path.exists(self.processed_messages_file):
+                with open(self.processed_messages_file, 'r') as f:
+                    data = json.load(f)
+                
+                processed_messages = data.get('processed_messages', {})
+                
+                # Load message IDs that aren't too old (within 30 days)
+                cutoff_date = datetime.now() - timedelta(days=30)
+                current_ids = set()
+                
+                for message_id, timestamp_str in processed_messages.items():
+                    try:
+                        timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        if timestamp > cutoff_date:
+                            current_ids.add(message_id)
+                    except (ValueError, AttributeError):
+                        # Skip entries with invalid timestamps
+                        continue
+                
+                self.processed_message_ids = current_ids
+                logger.info(f"Loaded {len(current_ids)} processed message IDs from storage")
+                
+                # Cleanup old entries if needed
+                if len(current_ids) != len(processed_messages):
+                    self._save_processed_message_ids()
+                    logger.info(f"Cleaned up {len(processed_messages) - len(current_ids)} old message IDs")
+            else:
+                logger.info("No processed messages file found - starting with empty set")
+                
+        except Exception as e:
+            logger.error(f"Error loading processed message IDs: {e}")
+            # Fallback to empty set if loading fails
+            self.processed_message_ids = set()
+    
+    def _save_processed_message_ids(self):
+        """Save processed message IDs to persistent JSON storage"""
+        import json
+        from datetime import datetime
+        
+        try:
+            # Create data structure with timestamps
+            processed_messages = {}
+            current_time = datetime.now().isoformat() + 'Z'
+            
+            for message_id in self.processed_message_ids:
+                processed_messages[message_id] = current_time
+            
+            data = {
+                'processed_messages': processed_messages,
+                'last_updated': current_time,
+                'last_cleanup': current_time
+            }
+            
+            with open(self.processed_messages_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            logger.debug(f"Saved {len(self.processed_message_ids)} processed message IDs to storage")
+            
+        except Exception as e:
+            logger.error(f"Error saving processed message IDs: {e}")
 
 # ==================== INTELLIGENT COORDINATION PROTOCOL ====================
 
@@ -1065,7 +1137,9 @@ class IntegratedCoordinationProtocol:
         self.active_conversations: Dict[str, List[CoordinationMessage]] = {}
         
         # Message tracking to prevent duplicate processing
+        self.processed_messages_file = "processed_messages.json"
         self.processed_message_ids: set = set()
+        self._load_processed_message_ids()
         self.current_context = ContextualFactors(
             current_workload=WorkloadLevel.MODERATE,
             energy_level=EnergyLevel.HIGH
@@ -1204,6 +1278,10 @@ class IntegratedCoordinationProtocol:
                     'processed': False,
                     'error': str(e)
                 })
+        
+        # Save processed message IDs to persistent storage after batch processing
+        if len(processing_results) > 0:
+            self._save_processed_message_ids()
         
         return processing_results
     
@@ -2625,6 +2703,118 @@ class IntegratedCoordinationProtocol:
             subject=subject,
             description=f"Meeting coordinated between {message.from_agent.user_name} and {self.agent_identity.user_name}"
         )
+    
+    def _load_processed_message_ids(self):
+        """Load processed message IDs from persistent JSON storage"""
+        import json
+        import os
+        from datetime import datetime, timedelta
+        
+        try:
+            if os.path.exists(self.processed_messages_file):
+                with open(self.processed_messages_file, 'r') as f:
+                    data = json.load(f)
+                
+                processed_messages = data.get('processed_messages', {})
+                
+                # Load message IDs that aren't too old (within 30 days)
+                cutoff_date = datetime.now() - timedelta(days=30)
+                current_ids = set()
+                
+                for message_id, timestamp_str in processed_messages.items():
+                    try:
+                        timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        if timestamp > cutoff_date:
+                            current_ids.add(message_id)
+                    except (ValueError, AttributeError):
+                        # Skip entries with invalid timestamps
+                        continue
+                
+                self.processed_message_ids = current_ids
+                logger.info(f"Loaded {len(current_ids)} processed message IDs from storage")
+                
+                # Cleanup old entries if needed
+                if len(current_ids) != len(processed_messages):
+                    self._save_processed_message_ids()
+                    logger.info(f"Cleaned up {len(processed_messages) - len(current_ids)} old message IDs")
+            else:
+                logger.info("No processed messages file found - starting with empty set")
+                
+        except Exception as e:
+            logger.error(f"Error loading processed message IDs: {e}")
+            # Fallback to empty set if loading fails
+            self.processed_message_ids = set()
+    
+    def _save_processed_message_ids(self):
+        """Save processed message IDs to persistent JSON storage"""
+        import json
+        from datetime import datetime
+        
+        try:
+            # Create data structure with timestamps
+            processed_messages = {}
+            current_time = datetime.now().isoformat() + 'Z'
+            
+            for message_id in self.processed_message_ids:
+                processed_messages[message_id] = current_time
+            
+            data = {
+                'processed_messages': processed_messages,
+                'last_updated': current_time,
+                'last_cleanup': current_time
+            }
+            
+            with open(self.processed_messages_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            logger.debug(f"Saved {len(self.processed_message_ids)} processed message IDs to storage")
+            
+        except Exception as e:
+            logger.error(f"Error saving processed message IDs: {e}")
+    
+    def _cleanup_old_processed_ids(self, days_to_keep=30):
+        """Remove processed message IDs older than specified days"""
+        import json
+        import os
+        from datetime import datetime, timedelta
+        
+        try:
+            if not os.path.exists(self.processed_messages_file):
+                return
+            
+            with open(self.processed_messages_file, 'r') as f:
+                data = json.load(f)
+            
+            processed_messages = data.get('processed_messages', {})
+            cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+            
+            # Filter out old entries
+            updated_messages = {}
+            for message_id, timestamp_str in processed_messages.items():
+                try:
+                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    if timestamp > cutoff_date:
+                        updated_messages[message_id] = timestamp_str
+                except (ValueError, AttributeError):
+                    # Skip entries with invalid timestamps
+                    continue
+            
+            # Update in-memory set
+            self.processed_message_ids = set(updated_messages.keys())
+            
+            # Save cleaned data
+            data['processed_messages'] = updated_messages
+            data['last_cleanup'] = datetime.now().isoformat() + 'Z'
+            
+            with open(self.processed_messages_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            removed_count = len(processed_messages) - len(updated_messages)
+            if removed_count > 0:
+                logger.info(f"Cleaned up {removed_count} old processed message IDs")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up old processed message IDs: {e}")
     
     def _find_mutual_availability(self, proposed_times: List[TimeSlot], 
                                 our_available_times: List[TimeSlot]) -> List[TimeSlot]:

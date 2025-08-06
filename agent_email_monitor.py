@@ -8,7 +8,7 @@ creating a near real-time communication system between Claude Code agents.
 
 import time
 import schedule
-from datetime import datetime
+from datetime import datetime, timedelta
 from integrated_agent_coordination import initialize_integrated_coordination_system, process_agent_coordination_messages
 
 class AgentEmailMonitor:
@@ -50,13 +50,27 @@ class AgentEmailMonitor:
             self._check_and_respond_job
         )
         
+        next_run_time = start_time.replace(second=0, microsecond=0) + timedelta(minutes=self.check_interval)
+        print(f"📅 Scheduled email checks every {self.check_interval} minutes")
+        print(f"📅 Next scheduled check: {next_run_time.strftime('%H:%M:%S')}")
+        
         # Initial check
+        print("🚀 Running initial email check...")
         self._check_and_respond_job()
         
         try:
+            loop_count = 0
             while self.is_running:
                 schedule.run_pending()
                 time.sleep(10)  # Check every 10 seconds for scheduled jobs
+                
+                loop_count += 1
+                # Log every 6 loops (1 minute) to show we're alive
+                if loop_count % 6 == 0:
+                    elapsed = (datetime.now() - start_time).total_seconds() / 60
+                    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Monitor alive - {elapsed:.1f}min elapsed, {self.message_count} messages processed")
+                    import sys
+                    sys.stdout.flush()
                 
                 # Stop after duration if specified
                 if duration_minutes > 0:
@@ -66,6 +80,13 @@ class AgentEmailMonitor:
                         
         except KeyboardInterrupt:
             print("\\n⏹️  Monitoring stopped by user")
+            self.stop_monitoring()
+        except Exception as e:
+            print(f"\\n❌ Monitoring loop error: {e}")
+            import traceback
+            print(f"❌ Full traceback: {traceback.format_exc()}")
+            import sys
+            sys.stdout.flush()
             self.stop_monitoring()
     
     def stop_monitoring(self):
@@ -77,9 +98,13 @@ class AgentEmailMonitor:
     
     def _check_and_respond_job(self):
         """Job function for checking and responding to coordination messages"""
+        import sys
+        import traceback
+        
         try:
             timestamp = datetime.now().strftime('%H:%M:%S')
             print(f"\\n🔍 [{timestamp}] Checking for coordination messages...")
+            sys.stdout.flush()  # Force output to be written immediately
             
             results = process_agent_coordination_messages()
             
@@ -101,8 +126,14 @@ class AgentEmailMonitor:
             else:
                 print("📭 No new coordination messages")
                 
+            sys.stdout.flush()  # Ensure all output is written
+            
         except Exception as e:
             print(f"❌ Error during coordination message check: {e}")
+            print(f"❌ Full traceback: {traceback.format_exc()}")
+            sys.stdout.flush()
+            # Re-raise to ensure the error is visible
+            raise
     
     def run_single_check(self):
         """Run a single check for coordination messages"""
