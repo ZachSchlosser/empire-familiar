@@ -17,6 +17,11 @@ from typing import Dict, List, Optional, Any, Union, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+try:
+    import dateutil.parser
+except ImportError:
+    logger.warning("dateutil not available, falling back to basic time parsing")
+
 from gmail_functions import GmailManager
 from calendar_functions import CalendarManager
 
@@ -171,6 +176,9 @@ class EmailTransportLayer:
         
         # Threading state for conversation continuity
         self.conversation_threading: Dict[str, Dict[str, Any]] = {}
+        
+        # Message tracking to prevent duplicate processing
+        self.processed_message_ids: set = set()
         # conversation_id -> {
         #   'message_ids': [list of message IDs in order],
         #   'subject': 'conversation subject',
@@ -224,17 +232,25 @@ class EmailTransportLayer:
     def check_for_coordination_messages(self, max_messages=10) -> List[CoordinationMessage]:
         """Check for incoming coordination messages"""
         try:
-            # Search for coordination emails
-            query = f"subject:{self.AGENT_SUBJECT_PREFIX} is:unread"
+            # Use time-based query instead of read status to prevent issues when humans open emails
+            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y/%m/%d')
+            query = f"subject:{self.AGENT_SUBJECT_PREFIX} after:{yesterday}"
             messages = self.gmail.get_messages(query=query, max_results=max_messages)
             
             coordination_messages = []
             for message in messages:
+                # Skip messages we've already processed
+                message_id = message['id']
+                if message_id in self.processed_message_ids:
+                    continue
+                    
                 parsed_message = self._parse_coordination_email(message)
                 if parsed_message:
                     coordination_messages.append(parsed_message)
-                    # Mark as read after parsing
-                    self.gmail.mark_as_read(message['id'])
+                    # Track as processed to prevent duplicate handling
+                    self.processed_message_ids.add(message_id)
+                    # Still mark as read for user convenience
+                    self.gmail.mark_as_read(message_id)
             
             if coordination_messages:
                 logger.info(f"Found {len(coordination_messages)} new coordination messages")
@@ -725,6 +741,9 @@ class IntegratedCoordinationProtocol:
         
         # Coordination state
         self.active_conversations: Dict[str, List[CoordinationMessage]] = {}
+        
+        # Message tracking to prevent duplicate processing
+        self.processed_message_ids: set = set()
         self.current_context = ContextualFactors(
             current_workload=WorkloadLevel.MODERATE,
             energy_level=EnergyLevel.HIGH
@@ -1436,11 +1455,35 @@ class IntegratedCoordinationProtocol:
             "context_score": slot.context_score
         }
     
+    def _parse_time_string(self, time_str: Union[str, datetime]) -> datetime:
+        """Parse time string from either ISO format or human-readable format"""
+        if isinstance(time_str, datetime):
+            return time_str
+        
+        if isinstance(time_str, str):
+            # Try ISO format first
+            try:
+                return datetime.fromisoformat(time_str)
+            except ValueError:
+                pass
+            
+            # Try human-readable formats with dateutil if available
+            try:
+                return dateutil.parser.parse(time_str)
+            except (NameError, Exception) as e:
+                # dateutil not available or parsing failed
+                logger.error(f"Unable to parse time string '{time_str}': {e}")
+                # Fallback to a reasonable default (tomorrow at 10 AM)
+                return datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        
+        logger.error(f"Invalid time format: {time_str}")
+        return datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+
     def _deserialize_timeslot(self, slot_data: Dict[str, Any]) -> TimeSlot:
         """Deserialize TimeSlot from message data"""
         return TimeSlot(
-            start_time=datetime.fromisoformat(slot_data["start_time"]),
-            end_time=datetime.fromisoformat(slot_data["end_time"]),
+            start_time=self._parse_time_string(slot_data["start_time"]),
+            end_time=self._parse_time_string(slot_data["end_time"]),
             confidence_score=slot_data["confidence_score"],
             conflicts=slot_data.get("conflicts", []),
             context_score=slot_data.get("context_score", {})
