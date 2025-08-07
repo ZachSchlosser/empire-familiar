@@ -323,6 +323,7 @@ class CoordinationMessage:
     expires_at: Optional[datetime] = None
     requires_response: bool = True
     transport_method: str = "email"  # "email", "calendar", "document"
+    gmail_message_id: Optional[str] = None  # Gmail message ID for marking as read
     
     def __post_init__(self):
         if not self.message_id:
@@ -470,9 +471,10 @@ class EmailTransportLayer:
     def check_for_coordination_messages(self, max_messages=10) -> List[CoordinationMessage]:
         """Check for incoming coordination messages"""
         try:
-            # Use time-based query instead of read status to prevent issues when humans open emails
-            yesterday = (now_tz() - timedelta(days=1)).strftime('%Y/%m/%d')
-            query = f"subject:{self.AGENT_SUBJECT_PREFIX} after:{yesterday}"
+            # Look back 5 minutes to catch recent messages with some buffer for delays
+            # Gmail expects epoch seconds for the after: operator
+            five_minutes_ago = int((now_tz() - timedelta(minutes=5)).timestamp())
+            query = f"subject:{self.AGENT_SUBJECT_PREFIX} after:{five_minutes_ago} is:unread -in:trash -in:spam"
             messages = self.gmail.get_messages(query=query, max_results=max_messages)
             
             coordination_messages = []
@@ -492,10 +494,8 @@ class EmailTransportLayer:
                         continue
                     
                     coordination_messages.append(parsed_message)
-                    # Track as processed to prevent duplicate handling
-                    self.processed_message_ids.add(message_id)
-                    # Still mark as read for user convenience
-                    self.gmail.mark_as_read(message_id)
+                    # Don't mark as processed yet - wait until after successful handling
+                    # Don't mark as read yet - wait until after successful processing
             
             if coordination_messages:
                 logger.info(f"Found {len(coordination_messages)} new coordination messages")
@@ -671,7 +671,8 @@ Protocol: {self.PROTOCOL_VERSION}
                 conversation_id=conversation_id,
                 payload=payload,
                 requires_response=requires_response,
-                expires_at=None  # Could be extracted from human content if needed
+                expires_at=None,  # Could be extracted from human content if needed
+                gmail_message_id=gmail_message.get('id')  # Store Gmail message ID
             )
             
         except Exception as e:
@@ -1573,6 +1574,14 @@ class IntegratedCoordinationProtocol:
                         self.dlq.retry_counts.pop(message_id, None)
                         self.dlq.retry_timestamps.pop(message_id, None)
                         
+                        # Mark Gmail message as read after successful processing
+                        if message.gmail_message_id:
+                            try:
+                                self.email_transport.gmail.mark_as_read(message.gmail_message_id)
+                                logger.debug(f"Marked Gmail message {message.gmail_message_id} as read")
+                            except Exception as e:
+                                logger.warning(f"Failed to mark message as read: {e}")
+                        
                         processing_results.append({
                             'message_id': message_id,
                             'from_agent': message.from_agent.agent_id,
@@ -1593,6 +1602,15 @@ class IntegratedCoordinationProtocol:
                     # No response needed (might be ACK or already handled)
                     self.processed_message_ids.add(message_id)
                     self._save_processed_message_ids()
+                    
+                    # Mark Gmail message as read since it's been processed
+                    if message.gmail_message_id:
+                        try:
+                            self.email_transport.gmail.mark_as_read(message.gmail_message_id)
+                            logger.debug(f"Marked Gmail message {message.gmail_message_id} as read (no response needed)")
+                        except Exception as e:
+                            logger.warning(f"Failed to mark message as read: {e}")
+                    
                     processing_results.append({
                         'message_id': message_id,
                         'processed': True,
