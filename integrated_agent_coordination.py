@@ -1195,8 +1195,9 @@ Protocol: {self.PROTOCOL_VERSION}
         
         # Generate unique Message-ID for this message
         timestamp = str(int(time.time() * 1000))  # milliseconds for uniqueness
-        hostname = socket.gethostname() or "localhost"
-        message_id = f"<coord-{message.conversation_id}-{message.message_id}-{timestamp}@{hostname}>"
+        # Use the domain from the agent's email address for valid Message-ID
+        domain = self.agent_identity.user_email.split('@')[1]
+        message_id = f"<coord-{message.conversation_id}-{message.message_id}-{timestamp}@{domain}>"
         
         threading_headers = {
             'message_id': message_id,
