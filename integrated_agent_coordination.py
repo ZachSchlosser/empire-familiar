@@ -853,10 +853,10 @@ Protocol: {self.PROTOCOL_VERSION}
                         time_prefs_json = tech_data['Time Preferences']
                         if time_prefs_json and time_prefs_json.strip():
                             time_preferences = json.loads(time_prefs_json)
-                            if isinstance(time_preferences, dict):
+                            if isinstance(time_preferences, list):
                                 payload['time_preferences'] = time_preferences
                             else:
-                                logger.warning("Time preferences JSON is not a valid object")
+                                logger.warning("Time preferences JSON is not a valid list")
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse time preferences JSON: {e}")
                     except Exception as e:
