@@ -89,7 +89,7 @@ class GmailManager:
         
         return formatted_messages
     
-    def send_email(self, to_email, subject, body, html_body=None, threading_headers=None):
+    def send_email(self, to_email, subject, body, html_body=None, threading_headers=None, thread_id=None):
         """
         Send an email with optional threading headers for conversation threading.
         
@@ -102,6 +102,7 @@ class GmailManager:
                 - message_id (str): Message-ID for this email
                 - in_reply_to (str): In-Reply-To header for replies
                 - references (str): References header for full thread chain
+            thread_id (str): Gmail thread ID to reply to (optional)
         
         Returns:
             dict: Sent message information with message_id or None if failed
@@ -142,10 +143,18 @@ class GmailManager:
             # Encode message
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
             
+            # Prepare message body
+            message_body = {'raw': raw_message}
+            
+            # CRITICAL: Add threadId if replying to existing thread
+            if thread_id:
+                message_body['threadId'] = thread_id
+                print(f"  🧵 Replying to thread: {thread_id}")
+            
             # Send message
             sent_message = self.service.users().messages().send(
                 userId='me',
-                body={'raw': raw_message}
+                body=message_body
             ).execute()
             
             # Add the message_id to the response for threading purposes

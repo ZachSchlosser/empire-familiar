@@ -228,7 +228,10 @@ class EmailTransportLayer:
             # Create structured email body
             email_body = self._create_coordination_email_body(message)
             
-            # Send via Gmail with threading headers
+            # Get thread ID for this conversation
+            thread_id = self.get_conversation_thread_id(message.conversation_id)
+            
+            # Send via Gmail with threading headers AND thread ID
             result = self.gmail.send_email(
                 to_email=message.to_agent_email,
                 subject=threading_headers['subject'],
@@ -237,7 +240,8 @@ class EmailTransportLayer:
                     'message_id': threading_headers['message_id'],
                     'in_reply_to': threading_headers.get('in_reply_to'),
                     'references': threading_headers.get('references')
-                }
+                },
+                thread_id=thread_id  # CRITICAL: Pass thread ID for proper threading
             )
             
             if result:
@@ -467,13 +471,14 @@ Protocol: {self.PROTOCOL_VERSION}
             # Determine if response is needed
             requires_response = 'Response Needed:' in human_content
             
-            # Extract Message-ID from email for threading
+            # Extract Message-ID and Thread-ID from email for threading
             received_message_id = self._extract_message_id_from_email(gmail_message)
+            received_thread_id = gmail_message.get('threadId')
             conversation_id = tech_data.get('Conversation', str(uuid.uuid4()))
             
             # Update conversation threading state with received message
             if received_message_id and conversation_id:
-                self._update_received_message_threading(conversation_id, received_message_id, from_email)
+                self._update_received_message_threading(conversation_id, received_message_id, from_email, received_thread_id)
             
             return CoordinationMessage(
                 message_id=tech_data.get('Message ID', str(uuid.uuid4())),
@@ -1045,7 +1050,7 @@ Protocol: {self.PROTOCOL_VERSION}
             logger.warning(f"Could not extract Message-ID from email: {e}")
         return None
     
-    def _update_received_message_threading(self, conversation_id: str, message_id: str, from_email: str) -> None:
+    def _update_received_message_threading(self, conversation_id: str, message_id: str, from_email: str, thread_id: str = None) -> None:
         """Update conversation threading state when receiving a message"""
         if conversation_id not in self.conversation_threading:
             # Initialize new conversation thread
