@@ -149,7 +149,15 @@ class GmailManager:
             # CRITICAL: Add threadId if replying to existing thread
             if thread_id:
                 message_body['threadId'] = thread_id
-                print(f"  🧵 Replying to thread: {thread_id}")
+                print(f"  🔗 THREAD CONTINUITY: Replying to existing thread")
+                print(f"     Thread ID: {thread_id}")
+                print(f"     Subject: {subject}")
+            else:
+                print(f"  🆕 NEW THREAD: No thread ID provided")
+                print(f"     Subject: {subject}")
+            
+            # Log the exact request body for debugging
+            print(f"  📤 Gmail API Request: threadId={'✓' if 'threadId' in message_body else '✗'}")
             
             # Send message
             sent_message = self.service.users().messages().send(
@@ -160,6 +168,16 @@ class GmailManager:
             # Add the message_id to the response for threading purposes
             if sent_message and threading_headers and 'message_id' in threading_headers:
                 sent_message['custom_message_id'] = threading_headers['message_id']
+            
+            # Log thread verification
+            response_thread_id = sent_message.get('threadId') if sent_message else None
+            if response_thread_id:
+                if thread_id and response_thread_id == thread_id:
+                    print(f"  ✅ THREAD VERIFIED: Gmail confirmed same thread")
+                elif thread_id and response_thread_id != thread_id:
+                    print(f"  ⚠️  THREAD MISMATCH: Expected {thread_id}, got {response_thread_id}")
+                else:
+                    print(f"  🆕 NEW THREAD CREATED: {response_thread_id}")
             
             print(f"Email sent successfully to {to_email}")
             if threading_headers:

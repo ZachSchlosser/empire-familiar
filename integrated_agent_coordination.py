@@ -231,6 +231,14 @@ class EmailTransportLayer:
             # Get thread ID for this conversation
             thread_id = self.get_conversation_thread_id(message.conversation_id)
             
+            # Log thread ID retrieval
+            if thread_id:
+                logger.info(f"🔗 CONTINUING THREAD for conversation {message.conversation_id}")
+                logger.info(f"   Using Thread ID: {thread_id}")
+            else:
+                logger.info(f"🆕 STARTING NEW THREAD for conversation {message.conversation_id}")
+                logger.info(f"   No existing thread ID found")
+            
             # Send via Gmail with threading headers AND thread ID
             result = self.gmail.send_email(
                 to_email=message.to_agent_email,
@@ -282,6 +290,9 @@ class EmailTransportLayer:
                     logger.info(f"  Gmail Message-ID: {gmail_message_id}")
                 if result.get('threadId'):
                     logger.info(f"  Thread-ID: {result['threadId']}")
+                
+                # Log thread summary
+                self._log_thread_summary(message.conversation_id)
                 return True
             else:
                 logger.error(f"Failed to send coordination message to {message.to_agent_email}")
@@ -475,6 +486,12 @@ Protocol: {self.PROTOCOL_VERSION}
             received_message_id = self._extract_message_id_from_email(gmail_message)
             received_thread_id = gmail_message.get('threadId')
             conversation_id = tech_data.get('Conversation', str(uuid.uuid4()))
+            
+            # Log thread reception
+            logger.info(f"📨 RECEIVED MESSAGE THREADING INFO:")
+            logger.info(f"   Message-ID: {received_message_id[:50] if received_message_id else 'None'}...")
+            logger.info(f"   Thread-ID: {received_thread_id}")
+            logger.info(f"   Conversation: {conversation_id}")
             
             # Update conversation threading state with received message
             if received_message_id and conversation_id:
@@ -1025,7 +1042,15 @@ Protocol: {self.PROTOCOL_VERSION}
         # Store thread_id when we get it (first message in conversation)
         if thread_id and not conv_info['thread_id']:
             conv_info['thread_id'] = thread_id
-            logger.info(f"Thread ID {thread_id} assigned to conversation {conv_id}")
+            logger.info(f"🆕 THREAD ASSIGNED to conversation {conv_id}")
+            logger.info(f"   Thread ID: {thread_id}")
+        elif thread_id and conv_info['thread_id'] and thread_id != conv_info['thread_id']:
+            logger.warning(f"⚠️  THREAD ID CHANGE DETECTED for conversation {conv_id}")
+            logger.warning(f"   Previous: {conv_info['thread_id']}")
+            logger.warning(f"   New: {thread_id}")
+            conv_info['thread_id'] = thread_id
+        elif thread_id and conv_info['thread_id'] == thread_id:
+            logger.debug(f"✅ Thread consistency maintained for {conv_id}")
         
         # Ensure participants are tracked
         if message.to_agent_email not in conv_info['participants']:
@@ -1076,16 +1101,50 @@ Protocol: {self.PROTOCOL_VERSION}
         if from_email and from_email not in conv_info['participants']:
             conv_info['participants'].append(from_email)
         
+        # Store thread_id when we receive it (critical for threading!)
+        if thread_id and not conv_info['thread_id']:
+            conv_info['thread_id'] = thread_id
+            logger.info(f"🆕 THREAD ASSIGNED to conversation {conversation_id}")
+            logger.info(f"   Thread ID: {thread_id}")
+        elif thread_id and conv_info['thread_id'] and thread_id != conv_info['thread_id']:
+            logger.warning(f"⚠️  THREAD ID CHANGE DETECTED for conversation {conversation_id}")
+            logger.warning(f"   Previous: {conv_info['thread_id']}")
+            logger.warning(f"   New: {thread_id}")
+            # Don't update - keep the original thread ID to maintain consistency
+        elif thread_id and conv_info['thread_id'] == thread_id:
+            logger.debug(f"✅ Thread consistency maintained for {conversation_id}")
+        
         # Keep threading history manageable
         if len(conv_info['message_ids']) > 10:
             conv_info['message_ids'] = conv_info['message_ids'][-10:]
         
         logger.debug(f"Updated conversation {conversation_id} with received message: {len(conv_info['message_ids'])} total")
+        
+        # Log thread summary after update
+        self._log_thread_summary(conversation_id)
     
     def get_conversation_thread_id(self, conversation_id: str) -> Optional[str]:
         """Get Gmail thread ID for a conversation"""
         conv_info = self.conversation_threading.get(conversation_id)
         return conv_info['thread_id'] if conv_info else None
+    
+    def _log_thread_summary(self, conversation_id: str) -> None:
+        """Log a summary of the thread state for debugging"""
+        conv_info = self.conversation_threading.get(conversation_id)
+        if not conv_info:
+            return
+        
+        logger.info(f"📊 THREAD SUMMARY for conversation {conversation_id}:")
+        logger.info(f"   Thread ID: {conv_info.get('thread_id', 'None')}")
+        logger.info(f"   Message Count: {len(conv_info.get('message_ids', []))}")
+        logger.info(f"   Participants: {', '.join(conv_info.get('participants', []))}")
+        logger.info(f"   Subject: {conv_info.get('subject', 'Unknown')}")
+        
+        # Check thread consistency
+        if conv_info.get('thread_id'):
+            logger.info(f"   Status: ✅ Thread established and tracking")
+        else:
+            logger.info(f"   Status: ⚠️  No thread ID - messages may not thread properly!")
     
     def archive_conversation_thread(self, conversation_id: str) -> bool:
         """Archive the Gmail thread for this conversation"""
