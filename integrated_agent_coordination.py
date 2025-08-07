@@ -604,10 +604,36 @@ Protocol: {self.PROTOCOL_VERSION}
             
             # Extract technical identifiers
             tech_data = {}
-            for line in technical_section.split('\n'):
+            lines = technical_section.split('\n')
+            i = 0
+            while i < len(lines):
+                line = lines[i]
                 if ':' in line:
                     key, value = line.split(':', 1)
-                    tech_data[key.strip()] = value.strip()
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Check if this looks like JSON that might span multiple lines
+                    if value.startswith(('{', '[')) and key in ['Meeting Context', 'Time Preferences', 'Proposed Times Data', 'Selected Time']:
+                        # Collect lines until we have complete JSON
+                        json_lines = [value]
+                        brace_count = value.count('{') - value.count('}')
+                        bracket_count = value.count('[') - value.count(']')
+                        
+                        # Keep adding lines until braces/brackets are balanced
+                        while (brace_count > 0 or bracket_count > 0) and i + 1 < len(lines):
+                            i += 1
+                            next_line = lines[i]
+                            json_lines.append(next_line)
+                            brace_count += next_line.count('{') - next_line.count('}')
+                            bracket_count += next_line.count('[') - next_line.count(']')
+                        
+                        # Join the lines to form complete JSON, removing line breaks
+                        # Replace newlines with spaces to create valid JSON
+                        value = ' '.join(line.strip() for line in json_lines)
+                    
+                    tech_data[key] = value
+                i += 1
             
             # Extract payload from structured technical data first, fallback to human-readable content
             payload = self._extract_payload_from_technical_data(tech_data, tech_data.get('Message Type', ''))
