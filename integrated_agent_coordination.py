@@ -494,6 +494,15 @@ class EmailTransportLayer:
                         continue
                     
                     coordination_messages.append(parsed_message)
+                else:
+                    # Log parsing failure for debugging
+                    logger.warning(f"Failed to parse coordination email - Message ID: {message_id}, Thread ID: {message.get('threadId', 'unknown')}")
+                    # Log first 200 chars of body for debugging
+                    try:
+                        body = self.gmail.extract_message_body(message['payload'])
+                        logger.debug(f"Message body preview: {body[:200]}...")
+                    except Exception as e:
+                        logger.debug(f"Could not extract body for debugging: {e}")
                     # Don't mark as processed yet - wait until after successful handling
                     # Don't mark as read yet - wait until after successful processing
             
