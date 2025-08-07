@@ -25,10 +25,175 @@ except ImportError:
 
 from gmail_functions import GmailManager
 from calendar_functions import CalendarManager
+from decimal import Decimal
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# JSON Encoder for proper serialization
+class CoordinationJSONEncoder(json.JSONEncoder):
+    """Properly encode Python objects to valid JSON"""
+    def default(self, obj):
+        if obj is None:
+            return None  # Converts to JSON null, not "None"
+        if isinstance(obj, bool):
+            return bool(obj)  # Ensures true/false not "True"/"False"
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, Enum):
+            return obj.value
+        if isinstance(obj, set):
+            return list(obj)
+        if isinstance(obj, bytes):
+            return obj.decode('utf-8', errors='ignore')
+        if isinstance(obj, Decimal):
+            return str(obj)
+        # Let default encoder handle errors for truly unserializable objects
+        return super().default(obj)
+
+# Dead Letter Queue for handling poison pills
+class DeadLetterQueue:
+    """Handle messages that cannot be processed after multiple attempts"""
+    
+    def __init__(self, dlq_file="dead_letter_messages.json", max_retries=3):
+        self.dlq_file = dlq_file
+        self.max_retries = max_retries
+        self.retry_counts = {}  # message_id -> retry_count
+        self.retry_timestamps = {}  # message_id -> last_retry_time
+        self._load_retry_counts()
+        
+    def should_retry(self, message_id: str) -> bool:
+        """Check if should retry with exponential backoff"""
+        if message_id not in self.retry_timestamps:
+            return True
+            
+        last_retry = self.retry_timestamps[message_id]
+        retry_count = self.retry_counts.get(message_id, 0)
+        
+        # Exponential backoff: 1min, 2min, 4min (max 5 minutes)
+        backoff_seconds = min(60 * (2 ** retry_count), 300)
+        
+        return (now_utc() - last_retry).total_seconds() > backoff_seconds
+        
+    def should_dead_letter(self, message_id: str) -> bool:
+        """Check if message has exceeded retry limit"""
+        self.retry_counts[message_id] = self.retry_counts.get(message_id, 0) + 1
+        self.retry_timestamps[message_id] = now_utc()
+        return self.retry_counts[message_id] >= self.max_retries
+        
+    def add_to_dlq(self, message: 'CoordinationMessage', error: Exception):
+        """Move message to dead letter queue with diagnostic information"""
+        import traceback
+        
+        dlq_entry = {
+            "message_id": message.message_id,
+            "conversation_id": message.conversation_id,
+            "from_agent": message.from_agent.agent_id,
+            "to_agent": message.to_agent_email,
+            "message_type": message.message_type.value,
+            "timestamp_received": message.timestamp,
+            "timestamp_dlq": now_utc().isoformat(),
+            "error_message": str(error),
+            "error_type": type(error).__name__,
+            "error_traceback": traceback.format_exc(),
+            "retry_count": self.retry_counts.get(message.message_id, 0),
+            "payload": message.payload,  # Keep raw payload for debugging
+            "gmail_thread_id": getattr(message, 'gmail_thread_id', None)
+        }
+        
+        # Atomic append to DLQ file
+        self._append_to_dlq(dlq_entry)
+        logger.warning(f"Message {message.message_id} moved to DLQ after {dlq_entry['retry_count']} attempts")
+        
+    def _append_to_dlq(self, entry: Dict[str, Any]):
+        """Append entry to DLQ file"""
+        try:
+            # Load existing entries
+            dlq_messages = self._load_dlq()
+            
+            # Append new entry
+            dlq_messages.append(entry)
+            
+            # Save back to file
+            with open(self.dlq_file, 'w') as f:
+                json.dump({
+                    "messages": dlq_messages,
+                    "last_updated": now_utc().isoformat()
+                }, f, indent=2, cls=CoordinationJSONEncoder)
+                
+        except Exception as e:
+            logger.error(f"Failed to append to DLQ: {e}")
+            
+    def _load_dlq(self) -> List[Dict[str, Any]]:
+        """Load DLQ messages from file"""
+        import os
+        
+        if not os.path.exists(self.dlq_file):
+            return []
+            
+        try:
+            with open(self.dlq_file, 'r') as f:
+                data = json.load(f)
+                return data.get("messages", [])
+        except Exception as e:
+            logger.error(f"Error loading DLQ: {e}")
+            return []
+            
+    def _load_retry_counts(self):
+        """Load retry counts from DLQ file"""
+        dlq_messages = self._load_dlq()
+        
+        for msg in dlq_messages:
+            msg_id = msg.get("message_id")
+            if msg_id:
+                self.retry_counts[msg_id] = msg.get("retry_count", 0)
+                
+    def get_statistics(self) -> Dict[str, Any]:
+        """Provide visibility into DLQ health"""
+        dlq_messages = self._load_dlq()
+        
+        if not dlq_messages:
+            return {"status": "healthy", "total_messages": 0}
+            
+        error_types = {}
+        for msg in dlq_messages:
+            error_type = msg.get('error_type', 'Unknown')
+            error_types[error_type] = error_types.get(error_type, 0) + 1
+            
+        return {
+            "status": "unhealthy" if len(dlq_messages) > 10 else "degraded",
+            "total_messages": len(dlq_messages),
+            "by_error_type": error_types,
+            "oldest_message": min(dlq_messages, key=lambda x: x.get('timestamp_dlq', '')) if dlq_messages else None,
+            "most_recent": max(dlq_messages, key=lambda x: x.get('timestamp_dlq', '')) if dlq_messages else None,
+            "conversations_affected": len(set(m.get('conversation_id', '') for m in dlq_messages))
+        }
+        
+    def manual_retry(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """Allow manual retry of DLQ message"""
+        dlq_messages = self._load_dlq()
+        
+        for i, msg in enumerate(dlq_messages):
+            if msg.get('message_id') == message_id:
+                # Reset retry count
+                self.retry_counts.pop(message_id, None)
+                self.retry_timestamps.pop(message_id, None)
+                
+                # Remove from DLQ
+                dlq_messages.pop(i)
+                
+                # Save updated DLQ
+                with open(self.dlq_file, 'w') as f:
+                    json.dump({
+                        "messages": dlq_messages,
+                        "last_updated": now_utc().isoformat()
+                    }, f, indent=2, cls=CoordinationJSONEncoder)
+                
+                # Return message data for reprocessing
+                return msg
+                
+        return None
 
 # ==================== TIMEZONE HELPERS ====================
 
@@ -171,7 +336,7 @@ class CoordinationMessage:
         """Generate unique message ID"""
         timestamp = str(int(time.time()))
         agent_id = self.from_agent.agent_id
-        content_hash = hashlib.md5(json.dumps(self.payload).encode()).hexdigest()[:8]
+        content_hash = hashlib.md5(json.dumps(self.payload, cls=CoordinationJSONEncoder).encode()).hexdigest()[:8]
         return f"coord_{agent_id}_{timestamp}_{content_hash}"
 
 # ==================== EMAIL TRANSPORT LAYER ====================
@@ -386,7 +551,7 @@ Protocol: {self.PROTOCOL_VERSION}
                 proposed_times = message.payload['proposed_times']
                 logger.info(f"Found proposed_times with {len(proposed_times)} slots")
                 structured_lines.append(f"Proposed Times Count: {len(proposed_times)}")
-                structured_lines.append("Proposed Times Data: " + json.dumps(proposed_times, default=str))
+                structured_lines.append("Proposed Times Data: " + json.dumps(proposed_times, cls=CoordinationJSONEncoder))
             else:
                 logger.warning("No 'proposed_times' found in SCHEDULE_PROPOSAL payload")
                 
@@ -396,15 +561,15 @@ Protocol: {self.PROTOCOL_VERSION}
         elif message.message_type == MessageType.SCHEDULE_REQUEST:
             if 'meeting_context' in message.payload:
                 meeting_context = message.payload['meeting_context']
-                structured_lines.append("Meeting Context: " + json.dumps(meeting_context, default=str))
+                structured_lines.append("Meeting Context: " + json.dumps(meeting_context, cls=CoordinationJSONEncoder))
                 
             if 'time_preferences' in message.payload:
-                structured_lines.append("Time Preferences: " + json.dumps(message.payload['time_preferences']))
+                structured_lines.append("Time Preferences: " + json.dumps(message.payload['time_preferences'], cls=CoordinationJSONEncoder))
                 
         elif message.message_type == MessageType.SCHEDULE_CONFIRMATION:
             if 'selected_time' in message.payload:
                 selected_time = message.payload['selected_time']
-                structured_lines.append("Selected Time: " + json.dumps(selected_time, default=str))
+                structured_lines.append("Selected Time: " + json.dumps(selected_time, cls=CoordinationJSONEncoder))
                 
         elif message.message_type == MessageType.SCHEDULE_REJECTION:
             if 'rejection_reason' in message.payload:
@@ -802,19 +967,19 @@ Protocol: {self.PROTOCOL_VERSION}
     def _generate_human_summary(self, message: CoordinationMessage) -> str:
         """Generate comprehensive human-readable coordination message"""
         
-        # Header with clear message type
+        # Header with clear message type - consistent with protocol
         if message.message_type == MessageType.SCHEDULE_REQUEST:
-            header = "MEETING REQUEST"
+            header = "SCHEDULE REQUEST"
         elif message.message_type == MessageType.SCHEDULE_PROPOSAL:
-            header = "MEETING PROPOSAL"
+            header = "SCHEDULE PROPOSAL"
         elif message.message_type == MessageType.SCHEDULE_COUNTER_PROPOSAL:
-            header = "ALTERNATIVE PROPOSAL"
+            header = "SCHEDULE COUNTER PROPOSAL"
         elif message.message_type == MessageType.SCHEDULE_CONFIRMATION:
-            header = "MEETING CONFIRMED"
+            header = "SCHEDULE CONFIRMATION"
         elif message.message_type == MessageType.SCHEDULE_REJECTION:
-            header = "REQUEST DECLINED"
+            header = "SCHEDULE REJECTION"
         elif message.message_type == MessageType.AVAILABILITY_QUERY:
-            header = "AVAILABILITY CHECK"
+            header = "AVAILABILITY QUERY"
         elif message.message_type == MessageType.AVAILABILITY_RESPONSE:
             header = "AVAILABILITY RESPONSE"
         else:
@@ -1248,6 +1413,10 @@ class IntegratedCoordinationProtocol:
         self.processed_messages_file = "processed_messages.json"
         self.processed_message_ids: set = set()
         self._load_processed_message_ids()
+        
+        # Dead Letter Queue for poison pills
+        self.dlq = DeadLetterQueue()
+        
         self.current_context = ContextualFactors(
             current_workload=WorkloadLevel.MODERATE,
             energy_level=EnergyLevel.HIGH
@@ -1346,50 +1515,115 @@ class IntegratedCoordinationProtocol:
         return success
     
     def process_incoming_coordination_messages(self) -> List[Dict[str, Any]]:
-        """Process incoming coordination messages and generate responses"""
+        """Process messages with proper error handling and DLQ support"""
+        import traceback
         
         incoming_messages = self.email_transport.check_for_coordination_messages()
         processing_results = []
         
         for message in incoming_messages:
+            message_id = message.message_id
+            
+            # Skip if already processed successfully
+            if message_id in self.processed_message_ids:
+                logger.debug(f"Skipping already processed message {message_id}")
+                continue
+                
+            # Check if should go to DLQ
+            if self.dlq.should_dead_letter(message_id):
+                self.dlq.add_to_dlq(message, 
+                    Exception(f"Max retries ({self.dlq.max_retries}) exceeded"))
+                # Mark as processed to prevent further attempts
+                self.processed_message_ids.add(message_id)
+                self._save_processed_message_ids()
+                processing_results.append({
+                    'message_id': message_id,
+                    'status': 'dead_lettered',
+                    'processed': True
+                })
+                continue
+                
+            # Check if should wait for backoff
+            if not self.dlq.should_retry(message_id):
+                logger.debug(f"Message {message_id} in backoff period, skipping")
+                continue
+                
+            # Attempt to process message
             try:
-                # Add to conversation history
+                # Add to conversation history first
                 conv_id = message.conversation_id
                 if conv_id not in self.active_conversations:
                     self.active_conversations[conv_id] = []
                 self.active_conversations[conv_id].append(message)
                 
-                # Process based on message type
+                # Generate response
                 response = self._process_coordination_message(message)
                 
-                result = {
-                    'message_id': message.message_id,
-                    'from_agent': message.from_agent.agent_id,
-                    'message_type': message.message_type.value,
-                    'processed': True,
-                    'response_sent': False
-                }
-                
                 if response:
+                    # Try to send response
                     response_sent = self.email_transport.send_coordination_message(response)
-                    result['response_sent'] = response_sent
                     
                     if response_sent:
+                        # Success! Mark as processed only after successful send
+                        self.processed_message_ids.add(message_id)
+                        self._save_processed_message_ids()
                         self.active_conversations[conv_id].append(response)
-                
-                processing_results.append(result)
+                        
+                        # Clear retry count on success
+                        self.dlq.retry_counts.pop(message_id, None)
+                        self.dlq.retry_timestamps.pop(message_id, None)
+                        
+                        processing_results.append({
+                            'message_id': message_id,
+                            'from_agent': message.from_agent.agent_id,
+                            'message_type': message.message_type.value,
+                            'processed': True,
+                            'response_sent': True
+                        })
+                    else:
+                        # Send failed - don't mark as processed, will retry
+                        logger.error(f"Failed to send response for {message_id}")
+                        processing_results.append({
+                            'message_id': message_id,
+                            'processed': False,
+                            'response_sent': False,
+                            'error': 'send_failed'
+                        })
+                else:
+                    # No response needed (might be ACK or already handled)
+                    self.processed_message_ids.add(message_id)
+                    self._save_processed_message_ids()
+                    processing_results.append({
+                        'message_id': message_id,
+                        'processed': True,
+                        'response_sent': False,
+                        'note': 'no_response_needed'
+                    })
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parsing failed for {message_id}: {e}")
+                # Check if should DLQ
+                if self.dlq.should_dead_letter(message_id):
+                    self.dlq.add_to_dlq(message, e)
+                    self.processed_message_ids.add(message_id)
+                    self._save_processed_message_ids()
+                processing_results.append({
+                    'message_id': message_id,
+                    'processed': False,
+                    'error': 'json_parse_error',
+                    'details': str(e)
+                })
                 
             except Exception as e:
-                logger.error(f"Error processing coordination message: {e}")
+                logger.error(f"Unexpected error processing {message_id}: {e}")
+                logger.error(traceback.format_exc())
+                # Don't mark as processed - will retry unless DLQ limit hit
                 processing_results.append({
-                    'message_id': message.message_id,
+                    'message_id': message_id,
                     'processed': False,
-                    'error': str(e)
+                    'error': str(e),
+                    'error_type': type(e).__name__
                 })
-        
-        # Save processed message IDs to persistent storage after batch processing
-        if len(processing_results) > 0:
-            self._save_processed_message_ids()
         
         return processing_results
     
@@ -3112,71 +3346,84 @@ class IntegratedCoordinationProtocol:
 
 # ==================== MAIN INTEGRATION FUNCTIONS ====================
 
-# Global coordination system instance
+# Global coordination system instance with thread safety
+import threading
+
 _integrated_coordinator = None
+_coordinator_lock = threading.Lock()
+
+def get_integrated_coordination_system():
+    """Get existing singleton instance without creating new one"""
+    global _integrated_coordinator
+    with _coordinator_lock:
+        if _integrated_coordinator is None:
+            raise RuntimeError("Coordination system not initialized. Call initialize_integrated_coordination_system first.")
+        return _integrated_coordinator
 
 def initialize_integrated_coordination_system(agent_config: Dict[str, Any] = None):
     """Initialize integrated coordination system with configurable agent identity"""
     global _integrated_coordinator
-    if _integrated_coordinator is None:
-        # Use provided config or auto-detect from Gmail
-        if agent_config is None:
-            # Auto-detect user email from Gmail authentication
-            user_email = None
-            try:
-                from gmail_functions import GmailManager
-                gmail = GmailManager()
-                profile = gmail.service.users().getProfile(userId='me').execute()
-                user_email = profile["emailAddress"]
-                logger.info(f"Auto-detected Gmail account: {user_email}")
-            except Exception as e:
-                logger.error(f"Gmail authentication required for coordination system: {e}")
-                raise ValueError("Gmail authentication failed. Please ensure valid credentials.json and token.json are available.")
+    with _coordinator_lock:
+        if _integrated_coordinator is None:
+            # Use provided config or auto-detect from Gmail
+            if agent_config is None:
+                # Auto-detect user email from Gmail authentication
+                user_email = None
+                try:
+                    from gmail_functions import GmailManager
+                    gmail = GmailManager()
+                    profile = gmail.service.users().getProfile(userId='me').execute()
+                    user_email = profile["emailAddress"]
+                    logger.info(f"Auto-detected Gmail account: {user_email}")
+                except Exception as e:
+                    logger.error(f"Gmail authentication required for coordination system: {e}")
+                    raise ValueError("Gmail authentication failed. Please ensure valid credentials.json and token.json are available.")
+                
+                # Validate the detected email
+                if not user_email or '@' not in user_email:
+                    raise ValueError("Invalid Gmail account detected. Please check authentication.")
+                
+                # Generate agent identity from detected email
+                email_prefix = user_email.split('@')[0]
+                agent_config = {
+                    "agent_id": f"{email_prefix}_claude_agent",
+                    "user_name": email_prefix.replace('.', ' ').title(),
+                    "user_email": user_email,
+                    "preferences": {}  # Add empty preferences dict
+                }
             
-            # Validate the detected email
-            if not user_email or '@' not in user_email:
-                raise ValueError("Invalid Gmail account detected. Please check authentication.")
+            # Validate agent config
+            if not agent_config.get("user_email") or "example.com" in agent_config.get("user_email", ""):
+                raise ValueError("Invalid agent configuration: valid user_email required, no example.com addresses allowed")
             
-            # Generate agent identity from detected email
-            email_prefix = user_email.split('@')[0]
-            agent_config = {
-                "agent_id": f"{email_prefix}_claude_agent",
-                "user_name": email_prefix.replace('.', ' ').title(),
-                "user_email": user_email
-            }
+            # Create agent identity from config
+            agent_identity = AgentIdentity(
+                agent_id=agent_config.get("agent_id", "claude_agent_v2"),
+                user_name=agent_config.get("user_name", "Claude Agent User"),
+                user_email=agent_config["user_email"],
+                capabilities=[
+                    "calendar_access", 
+                    "scheduling_coordination", 
+                    "multi_agent_communication",
+                    "email_coordination",
+                    "context_awareness",
+                    "intelligent_scheduling"
+                ]
+            )
+            
+            # Use provided preferences or defaults
+            pref_config = agent_config.get("preferences", {})
+            preferences = SchedulingPreferences(
+                preferred_meeting_times=pref_config.get("preferred_meeting_times", ["morning", "afternoon"]),
+                max_meetings_per_day=pref_config.get("max_meetings_per_day", 5),
+                min_meeting_gap_minutes=pref_config.get("min_meeting_gap_minutes", 15),
+                focus_time_protection=pref_config.get("focus_time_protection", True),
+                negotiation_style=pref_config.get("negotiation_style", "collaborative"),
+                response_time_preference=pref_config.get("response_time_preference", "immediate")
+            )
+                
+            _integrated_coordinator = IntegratedCoordinationProtocol(agent_identity, preferences)
         
-        # Validate agent config
-        if not agent_config.get("user_email") or "example.com" in agent_config.get("user_email", ""):
-            raise ValueError("Invalid agent configuration: valid user_email required, no example.com addresses allowed")
-        
-        # Create agent identity from config
-        agent_identity = AgentIdentity(
-            agent_id=agent_config.get("agent_id", "claude_agent_v2"),
-            user_name=agent_config.get("user_name", "Claude Agent User"),
-            user_email=agent_config["user_email"],
-            capabilities=[
-                "calendar_access", 
-                "scheduling_coordination", 
-                "multi_agent_communication",
-                "email_coordination",
-                "context_awareness",
-                "intelligent_scheduling"
-            ]
-        )
-        
-        # Use provided preferences or defaults
-        pref_config = agent_config.get("preferences", {})
-        preferences = SchedulingPreferences(
-            preferred_meeting_times=pref_config.get("preferred_meeting_times", ["morning", "afternoon"]),
-            max_meetings_per_day=pref_config.get("max_meetings_per_day", 5),
-            min_meeting_gap_minutes=pref_config.get("min_meeting_gap_minutes", 15),
-            focus_time_protection=pref_config.get("focus_time_protection", True),
-            negotiation_style=pref_config.get("negotiation_style", "collaborative"),
-            response_time_preference=pref_config.get("response_time_preference", "immediate")
-        )
-        
-        _integrated_coordinator = IntegratedCoordinationProtocol(agent_identity, preferences)
-    
     return _integrated_coordinator
 
 def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str, 
@@ -3185,7 +3432,10 @@ def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str
                                  description: str = None) -> bool:
     """Send intelligent coordination request to target agent"""
     
-    coordinator = initialize_integrated_coordination_system()
+    try:
+        coordinator = get_integrated_coordination_system()
+    except RuntimeError:
+        coordinator = initialize_integrated_coordination_system()
     
     # Use provided attendees or default to sender and target
     if attendees is None:
@@ -3208,12 +3458,20 @@ def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str
 
 def process_agent_coordination_messages() -> List[Dict[str, Any]]:
     """Process incoming coordination messages with intelligent responses"""
-    coordinator = initialize_integrated_coordination_system()
+    # Use existing singleton, don't create new instance
+    try:
+        coordinator = get_integrated_coordination_system()
+    except RuntimeError:
+        # If not initialized, initialize it once
+        coordinator = initialize_integrated_coordination_system()
     return coordinator.process_incoming_coordination_messages()
 
 def get_coordination_system_status() -> Dict[str, Any]:
     """Get integrated coordination system status"""
-    coordinator = initialize_integrated_coordination_system()
+    try:
+        coordinator = get_integrated_coordination_system()
+    except RuntimeError:
+        coordinator = initialize_integrated_coordination_system()
     return {
         'agent_id': coordinator.agent_identity.agent_id,
         'email': coordinator.agent_identity.user_email,
@@ -3228,7 +3486,10 @@ def get_coordination_system_status() -> Dict[str, Any]:
 def update_coordination_context(workload: str = None, energy: str = None, 
                               meetings_today: int = None) -> Dict[str, Any]:
     """Update coordination context for better scheduling decisions"""
-    coordinator = initialize_integrated_coordination_system()
+    try:
+        coordinator = get_integrated_coordination_system()
+    except RuntimeError:
+        coordinator = initialize_integrated_coordination_system()
     
     updates = {}
     if workload:
