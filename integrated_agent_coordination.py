@@ -369,6 +369,9 @@ class EmailTransportLayer:
         self.processed_message_ids: set = set()
         self._load_processed_message_ids()
         self._load_conversation_threading()
+        
+        # Active conversations persistence file
+        self.active_conversations_file = "active_conversations.json"
         # conversation_id -> {
         #   'message_ids': [list of message IDs in order],
         #   'subject': 'conversation subject',
@@ -623,6 +626,24 @@ Protocol: {self.PROTOCOL_VERSION}
         elif message.message_type == MessageType.SCHEDULE_REJECTION:
             if 'rejection_reason' in message.payload:
                 structured_lines.append(f"Rejection Reason: {message.payload['rejection_reason']}")
+                
+        elif message.message_type == MessageType.SCHEDULE_COUNTER_PROPOSAL:
+            # Handle counter proposals with proposed times
+            if 'proposed_times' in message.payload:
+                proposed_times = message.payload['proposed_times']
+                logger.info(f"Found proposed_times with {len(proposed_times)} slots in SCHEDULE_COUNTER_PROPOSAL")
+                structured_lines.append(f"Proposed Times Count: {len(proposed_times)}")
+                structured_lines.append("Proposed Times Data: " + json.dumps(proposed_times, cls=CoordinationJSONEncoder))
+                
+            if 'proposal_confidence' in message.payload:
+                structured_lines.append(f"Proposal Confidence: {message.payload['proposal_confidence']}")
+                
+            if 'counter_proposal_reason' in message.payload:
+                structured_lines.append(f"Counter Proposal Reason: {message.payload['counter_proposal_reason']}")
+                
+            if 'meeting_context' in message.payload:
+                meeting_context = message.payload['meeting_context']
+                structured_lines.append("Meeting Context: " + json.dumps(meeting_context, cls=CoordinationJSONEncoder))
         
         # Return formatted structured data section
         if structured_lines:
@@ -1517,6 +1538,116 @@ Protocol: {self.PROTOCOL_VERSION}
         except Exception as e:
             logger.error(f"Error saving conversation threading: {e}")
     
+    def _load_active_conversations(self):
+        """Load active conversations from persistent JSON storage"""
+        import os
+        from datetime import datetime, timedelta
+        
+        try:
+            if os.path.exists(self.active_conversations_file):
+                with open(self.active_conversations_file, 'r') as f:
+                    data = json.load(f)
+                
+                conversations = data.get('active_conversations', {})
+                
+                # Load conversations that aren't too old (within 7 days for active conversations)
+                cutoff_date = now_tz() - timedelta(days=7)
+                current_conversations = {}
+                
+                for conv_id, messages_data in conversations.items():
+                    try:
+                        # Reconstruct CoordinationMessage objects from stored data
+                        messages = []
+                        for msg_data in messages_data:
+                            # Parse timestamp
+                            timestamp_str = msg_data.get('timestamp')
+                            if timestamp_str:
+                                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                                if timestamp > cutoff_date:
+                                    # Reconstruct message
+                                    from_agent = AgentIdentity(**msg_data['from_agent'])
+                                    message = CoordinationMessage(
+                                        message_id=msg_data['message_id'],
+                                        message_type=MessageType(msg_data['message_type']),
+                                        from_agent=from_agent,
+                                        to_agent_email=msg_data['to_agent_email'],
+                                        timestamp=timestamp,
+                                        conversation_id=msg_data['conversation_id'],
+                                        payload=msg_data['payload'],
+                                        expires_at=datetime.fromisoformat(msg_data['expires_at'].replace('Z', '+00:00')) if msg_data.get('expires_at') else None,
+                                        requires_response=msg_data.get('requires_response', True),
+                                        transport_method=msg_data.get('transport_method', 'email'),
+                                        gmail_message_id=msg_data.get('gmail_message_id')
+                                    )
+                                    messages.append(message)
+                        
+                        if messages:
+                            current_conversations[conv_id] = messages
+                            
+                    except Exception as e:
+                        logger.warning(f"Error loading conversation {conv_id}: {e}")
+                        continue
+                
+                self.active_conversations = current_conversations
+                total_messages = sum(len(msgs) for msgs in current_conversations.values())
+                logger.info(f"Loaded {len(current_conversations)} active conversations with {total_messages} messages from storage")
+                
+        except Exception as e:
+            logger.error(f"Error loading active conversations: {e}")
+            # Fallback to empty dict if loading fails
+            self.active_conversations = {}
+    
+    def _save_active_conversations(self):
+        """Save active conversations to persistent JSON storage"""
+        import json
+        from datetime import datetime
+        
+        try:
+            # Convert CoordinationMessage objects to serializable dicts
+            conversations_data = {}
+            
+            for conv_id, messages in self.active_conversations.items():
+                messages_data = []
+                for msg in messages:
+                    msg_data = {
+                        'message_id': msg.message_id,
+                        'message_type': msg.message_type.value,
+                        'from_agent': {
+                            'agent_id': msg.from_agent.agent_id,
+                            'user_name': msg.from_agent.user_name,
+                            'user_email': msg.from_agent.user_email,
+                            'agent_version': msg.from_agent.agent_version,
+                            'capabilities': msg.from_agent.capabilities,
+                            'timezone': msg.from_agent.timezone
+                        },
+                        'to_agent_email': msg.to_agent_email,
+                        'timestamp': msg.timestamp.isoformat(),
+                        'conversation_id': msg.conversation_id,
+                        'payload': msg.payload,
+                        'expires_at': msg.expires_at.isoformat() if msg.expires_at else None,
+                        'requires_response': msg.requires_response,
+                        'transport_method': msg.transport_method,
+                        'gmail_message_id': msg.gmail_message_id
+                    }
+                    messages_data.append(msg_data)
+                
+                conversations_data[conv_id] = messages_data
+            
+            data = {
+                'active_conversations': conversations_data,
+                'last_updated': now_utc().isoformat(),
+                'version': '1.0'
+            }
+            
+            with open(self.active_conversations_file, 'w') as f:
+                json.dump(data, f, indent=2, cls=CoordinationJSONEncoder)
+            
+            total_messages = sum(len(msgs) for msgs in self.active_conversations.values())
+            logger.debug(f"Saved {len(self.active_conversations)} active conversations with {total_messages} messages to storage")
+            
+        except Exception as e:
+            logger.error(f"Error saving active conversations: {e}")
+    
     def _save_processed_message_ids(self):
         """Save processed message IDs to persistent JSON storage"""
         import json
@@ -1560,11 +1691,15 @@ class IntegratedCoordinationProtocol:
         
         # Coordination state
         self.active_conversations: Dict[str, List[CoordinationMessage]] = {}
+        self.active_conversations_file = "active_conversations.json"
         
         # Message tracking to prevent duplicate processing
         self.processed_messages_file = "processed_messages.json"
         self.processed_message_ids: set = set()
         self._load_processed_message_ids()
+        
+        # Load active conversations after other persistence files
+        self._load_active_conversations()
         
         # Dead Letter Queue for poison pills
         self.dlq = DeadLetterQueue()
@@ -1665,6 +1800,8 @@ class IntegratedCoordinationProtocol:
             if conv_id not in self.active_conversations:
                 self.active_conversations[conv_id] = []
             self.active_conversations[conv_id].append(message)
+            # Persist active conversations
+            self._save_active_conversations()
         
         return success
     
@@ -1727,6 +1864,8 @@ class IntegratedCoordinationProtocol:
                 if conv_id not in self.active_conversations:
                     self.active_conversations[conv_id] = []
                 self.active_conversations[conv_id].append(message)
+                # Persist active conversations
+                self._save_active_conversations()
                 
                 # Generate response
                 response = self._process_coordination_message(message)
@@ -1740,6 +1879,8 @@ class IntegratedCoordinationProtocol:
                         self.processed_message_ids.add(message_id)
                         self._save_processed_message_ids()
                         self.active_conversations[conv_id].append(response)
+                        # Persist active conversations after adding response
+                        self._save_active_conversations()
                         
                         # Clear retry count on success
                         self.dlq.retry_counts.pop(message_id, None)
