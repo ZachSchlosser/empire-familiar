@@ -8,8 +8,20 @@ creating a near real-time communication system between Claude Code agents.
 
 import time
 import schedule
+import logging
 from datetime import datetime, timedelta
 from integrated_agent_coordination import initialize_integrated_coordination_system, process_agent_coordination_messages
+
+# Configure logging to show debug messages from coordination system
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
+
+# Set specific loggers to appropriate levels
+logging.getLogger('integrated_agent_coordination').setLevel(logging.DEBUG)
+logging.getLogger('googleapiclient.discovery_cache').setLevel(logging.WARNING)  # Reduce noise
 
 class AgentEmailMonitor:
     """Real-time monitor for agent email communications"""
@@ -108,22 +120,43 @@ class AgentEmailMonitor:
             
             results = process_agent_coordination_messages()
             
-            processed_count = len(results)
-            response_count = len([r for r in results if r.get('response_sent', False)])
+            # Separate successful and failed results
+            successful_results = [r for r in results if r.get('processed', False) or r.get('response_sent', False)]
+            failed_results = [r for r in results if r.get('error') == 'parse_failed']
+            other_failures = [r for r in results if not r.get('processed', False) and r.get('error') != 'parse_failed']
+            
+            processed_count = len(successful_results)
+            response_count = len([r for r in successful_results if r.get('response_sent', False)])
+            failed_count = len(failed_results)
             
             if processed_count > 0:
                 print(f"📬 Found {processed_count} new coordination messages:")
-                for result in results:
-                    if result.get('processed', False):
-                        msg_type = result.get('message_type', 'unknown')
-                        from_agent = result.get('from_agent', 'unknown')
-                        print(f"  • {msg_type} from {from_agent}")
+                for result in successful_results:
+                    msg_type = result.get('message_type', 'unknown')
+                    from_agent = result.get('from_agent', 'unknown')
+                    print(f"  • {msg_type} from {from_agent}")
                 
                 if response_count > 0:
                     print(f"🤖 Sent {response_count} auto-responses")
                 
                 self.message_count += processed_count
-            else:
+                
+            if failed_count > 0:
+                print(f"⚠️  {failed_count} messages failed to parse:")
+                for result in failed_results:
+                    details = result.get('details', {})
+                    print(f"  • Message {result['message_id'][:8]}...")
+                    print(f"    From: {details.get('from_email', 'unknown')}")
+                    print(f"    Has separator: {details.get('has_separator', 'unknown')}")
+                    if details.get('body_preview'):
+                        print(f"    Body: {details['body_preview'][:50]}...")
+                        
+            if other_failures:
+                print(f"❌ {len(other_failures)} messages failed processing:")
+                for result in other_failures:
+                    print(f"  • {result.get('message_id', 'unknown')}: {result.get('error', 'unknown error')}")
+                
+            if processed_count == 0 and failed_count == 0 and len(other_failures) == 0:
                 print("📭 No new coordination messages")
                 
             sys.stdout.flush()  # Ensure all output is written

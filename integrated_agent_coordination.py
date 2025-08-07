@@ -14,7 +14,7 @@ import time
 import re
 import pytz
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Union, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from dataclasses import dataclass, asdict
 from enum import Enum
 
@@ -468,8 +468,12 @@ class EmailTransportLayer:
             logger.error(f"Error sending coordination message: {e}")
             return False
     
-    def check_for_coordination_messages(self, max_messages=10) -> List[CoordinationMessage]:
-        """Check for incoming coordination messages"""
+    def check_for_coordination_messages(self, max_messages=10) -> Tuple[List[CoordinationMessage], List[Dict[str, Any]]]:
+        """Check for incoming coordination messages
+        
+        Returns:
+            Tuple of (coordination_messages, failed_parses)
+        """
         try:
             # Look back 5 minutes to catch recent messages with some buffer for delays
             # Gmail expects epoch seconds for the after: operator
@@ -478,6 +482,8 @@ class EmailTransportLayer:
             messages = self.gmail.get_messages(query=query, max_results=max_messages)
             
             coordination_messages = []
+            failed_parses = []
+            
             for message in messages:
                 # Skip messages we've already processed
                 message_id = message['id']
@@ -495,14 +501,35 @@ class EmailTransportLayer:
                     
                     coordination_messages.append(parsed_message)
                 else:
-                    # Log parsing failure for debugging
-                    logger.warning(f"Failed to parse coordination email - Message ID: {message_id}, Thread ID: {message.get('threadId', 'unknown')}")
-                    # Log first 200 chars of body for debugging
+                    # Track failed parse with diagnostic info
+                    failure_info = {
+                        'message_id': message_id,
+                        'thread_id': message.get('threadId', 'unknown'),
+                        'timestamp': datetime.now().isoformat(),
+                        'reason': 'parse_returned_none'
+                    }
+                    
+                    # Try to extract diagnostic information
                     try:
                         body = self.gmail.extract_message_body(message['payload'])
-                        logger.debug(f"Message body preview: {body[:200]}...")
+                        failure_info['body_preview'] = body[:200]
+                        failure_info['has_separator'] = self.MESSAGE_SEPARATOR in body
+                        
+                        # Check sender email
+                        headers = message['payload'].get('headers', [])
+                        for header in headers:
+                            if header['name'].lower() == 'from':
+                                failure_info['from_email'] = header['value']
+                                break
+                                
                     except Exception as e:
-                        logger.debug(f"Could not extract body for debugging: {e}")
+                        failure_info['diagnostic_error'] = str(e)
+                    
+                    failed_parses.append(failure_info)
+                    
+                    # Log parsing failure for debugging
+                    logger.warning(f"Failed to parse coordination email - Message ID: {message_id}, Thread ID: {message.get('threadId', 'unknown')}")
+                    logger.debug(f"Failure details: {failure_info}")
                     # Don't mark as processed yet - wait until after successful handling
                     # Don't mark as read yet - wait until after successful processing
             
@@ -510,12 +537,15 @@ class EmailTransportLayer:
                 logger.info(f"Found {len(coordination_messages)} new coordination messages")
                 # Save processed message IDs to persistent storage
                 self._save_processed_message_ids()
+                
+            if failed_parses:
+                logger.warning(f"Failed to parse {len(failed_parses)} messages")
             
-            return coordination_messages
+            return coordination_messages, failed_parses
             
         except Exception as e:
             logger.error(f"Error checking for coordination messages: {e}")
-            return []
+            return [], []
     
     def _create_coordination_email_body(self, message: CoordinationMessage) -> str:
         """Create structured email body for coordination message"""
@@ -1554,8 +1584,25 @@ class IntegratedCoordinationProtocol:
         """Process messages with proper error handling and DLQ support"""
         import traceback
         
-        incoming_messages = self.email_transport.check_for_coordination_messages()
+        incoming_messages, failed_parses = self.email_transport.check_for_coordination_messages()
         processing_results = []
+        
+        # Log failed parses
+        if failed_parses:
+            logger.warning(f"📧 {len(failed_parses)} messages failed to parse:")
+            for failure in failed_parses:
+                logger.warning(f"  - Message {failure['message_id']}: {failure.get('reason', 'unknown')}")
+                logger.debug(f"    From: {failure.get('from_email', 'unknown')}")
+                logger.debug(f"    Has separator: {failure.get('has_separator', 'unknown')}")
+                logger.debug(f"    Body preview: {failure.get('body_preview', 'N/A')[:100]}...")
+                
+                # Add to processing results for visibility
+                processing_results.append({
+                    'message_id': failure['message_id'],
+                    'processed': False,
+                    'error': 'parse_failed',
+                    'details': failure
+                })
         
         for message in incoming_messages:
             message_id = message.message_id
