@@ -331,8 +331,10 @@ class CoordinationMessage:
     def __post_init__(self):
         if not self.message_id:
             self.message_id = self._generate_message_id()
-        if not self.conversation_id:
+        # Fix: Check for both None and empty string to prevent regeneration
+        if self.conversation_id is None or self.conversation_id == "":
             self.conversation_id = str(uuid.uuid4())
+            logger.debug(f"Generated new conversation_id: {self.conversation_id} for message type: {self.message_type.value}")
         if self.expires_at is None and self.requires_response:
             self.expires_at = self.timestamp + timedelta(hours=24)
     
@@ -1288,6 +1290,8 @@ Protocol: {self.PROTOCOL_VERSION}
             conv_info['thread_id'] = thread_id
             logger.info(f"🆕 THREAD ASSIGNED to conversation {conv_id}")
             logger.info(f"   Thread ID: {thread_id}")
+            logger.debug(f"   Message type: {message.message_type.value}")
+            logger.debug(f"   From: {message.from_agent.user_email} → To: {message.to_agent_email}")
         elif thread_id and conv_info['thread_id'] and thread_id != conv_info['thread_id']:
             logger.warning(f"⚠️  THREAD ID CHANGE DETECTED for conversation {conv_id}")
             logger.warning(f"   Previous: {conv_info['thread_id']}")
@@ -1647,9 +1651,11 @@ class IntegratedCoordinationProtocol:
             from_agent=self.agent_identity,
             to_agent_email=target_agent_email,
             timestamp=now_tz(),
-            conversation_id="",
+            conversation_id=None,  # Fix: Use None to let __post_init__ generate a new ID
             payload=payload
         )
+        
+        logger.debug(f"Created SCHEDULE_REQUEST with conversation_id: {message.conversation_id}")
         
         success = self.email_transport.send_coordination_message(message)
         
@@ -3494,6 +3500,40 @@ class IntegratedCoordinationProtocol:
         })
         
         return rejection_message
+    
+    def _create_counter_proposal_message(self, original_message: CoordinationMessage, 
+                                       proposed_times: List[TimeSlot], 
+                                       meeting_context: MeetingContext) -> CoordinationMessage:
+        """Create a counter proposal message with alternative times"""
+        
+        # Serialize the proposed times
+        serialized_times = [self._serialize_timeslot(slot) for slot in proposed_times]
+        
+        payload = {
+            'original_message_id': original_message.message_id,
+            'proposed_times': serialized_times,
+            'proposal_confidence': max(slot.confidence_score for slot in proposed_times),
+            'meeting_context': {
+                'subject': meeting_context.subject,
+                'duration_minutes': meeting_context.duration_minutes,
+                'attendees': meeting_context.attendees,
+                'description': meeting_context.description
+            },
+            'sender_constraints': self._get_current_constraints(),
+            'context_analysis': self._analyze_scheduling_context(meeting_context),
+            'counter_proposal_reason': 'Found better mutual times based on both calendars'
+        }
+        
+        return CoordinationMessage(
+            message_id="",
+            message_type=MessageType.SCHEDULE_COUNTER_PROPOSAL,
+            from_agent=self.agent_identity,
+            to_agent_email=original_message.from_agent.user_email,
+            timestamp=now_tz(),
+            conversation_id=original_message.conversation_id,
+            payload=payload,
+            requires_response=True
+        )
     
     def _create_rejection_message(self, original_message: CoordinationMessage, reason: str) -> CoordinationMessage:
         """Create a rejection message with mandatory meaningful reason"""
