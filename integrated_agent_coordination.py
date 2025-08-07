@@ -360,11 +360,13 @@ class EmailTransportLayer:
         
         # Threading state for conversation continuity
         self.conversation_threading: Dict[str, Dict[str, Any]] = {}
+        self.conversation_threading_file = "conversation_threading.json"
         
         # Message tracking to prevent duplicate processing
         self.processed_messages_file = "processed_messages.json"
         self.processed_message_ids: set = set()
         self._load_processed_message_ids()
+        self._load_conversation_threading()
         # conversation_id -> {
         #   'message_ids': [list of message IDs in order],
         #   'subject': 'conversation subject',
@@ -451,6 +453,9 @@ class EmailTransportLayer:
                     gmail_message_id or threading_headers['message_id'],  # Fallback to custom if Gmail ID not found
                     result.get('threadId')
                 )
+                
+                # Persist threading state to disk
+                self._save_conversation_threading()
                 
                 logger.info(f"Coordination message sent to {message.to_agent_email} (threaded)")
                 logger.info(f"  Conversation: {message.conversation_id}")
@@ -729,6 +734,8 @@ Protocol: {self.PROTOCOL_VERSION}
             # Update conversation threading state with received message
             if received_message_id and conversation_id:
                 self._update_received_message_threading(conversation_id, received_message_id, from_email, received_thread_id)
+                # Persist threading state to disk
+                self._save_conversation_threading()
             
             return CoordinationMessage(
                 message_id=tech_data.get('Message ID', str(uuid.uuid4())),
@@ -1223,6 +1230,8 @@ Protocol: {self.PROTOCOL_VERSION}
                 'thread_id': None,
                 'latest_message_id': None  # Track latest actual Gmail message ID for proper threading
             }
+            # Persist new conversation to disk
+            self._save_conversation_threading()
         
         # For replies in existing conversations, use ACTUAL Gmail message IDs for proper threading
         conv_info = self.conversation_threading[conv_id]
@@ -1434,6 +1443,75 @@ Protocol: {self.PROTOCOL_VERSION}
             logger.error(f"Error loading processed message IDs: {e}")
             # Fallback to empty set if loading fails
             self.processed_message_ids = set()
+    
+    def _load_conversation_threading(self):
+        """Load conversation threading state from persistent JSON storage"""
+        import os
+        from datetime import datetime, timedelta
+        
+        try:
+            if os.path.exists(self.conversation_threading_file):
+                with open(self.conversation_threading_file, 'r') as f:
+                    data = json.load(f)
+                
+                conversation_threading = data.get('conversation_threading', {})
+                
+                # Load conversations that aren't too old (within 30 days)
+                cutoff_date = now_tz() - timedelta(days=30)
+                current_conversations = {}
+                
+                for conv_id, conv_data in conversation_threading.items():
+                    try:
+                        # Check if conversation has recent activity
+                        last_updated_str = conv_data.get('last_updated')
+                        if last_updated_str:
+                            last_updated = datetime.fromisoformat(last_updated_str.replace('Z', '+00:00'))
+                            if last_updated > cutoff_date:
+                                current_conversations[conv_id] = conv_data
+                    except (ValueError, AttributeError):
+                        # Skip entries with invalid timestamps
+                        continue
+                
+                self.conversation_threading = current_conversations
+                logger.info(f"Loaded {len(current_conversations)} conversation threads from storage")
+                
+                # Cleanup old entries if needed
+                if len(current_conversations) != len(conversation_threading):
+                    self._save_conversation_threading()
+                    logger.info(f"Cleaned up {len(conversation_threading) - len(current_conversations)} old conversation threads")
+            else:
+                logger.info("No conversation threading file found - starting with empty state")
+                
+        except Exception as e:
+            logger.error(f"Error loading conversation threading: {e}")
+            # Fallback to empty dict if loading fails
+            self.conversation_threading = {}
+    
+    def _save_conversation_threading(self):
+        """Save conversation threading state to persistent JSON storage"""
+        import json
+        from datetime import datetime
+        
+        try:
+            # Add timestamps to conversations for cleanup
+            current_time = now_utc().isoformat()
+            
+            for conv_id, conv_data in self.conversation_threading.items():
+                conv_data['last_updated'] = current_time
+            
+            data = {
+                'conversation_threading': self.conversation_threading,
+                'last_updated': current_time,
+                'last_cleanup': current_time
+            }
+            
+            with open(self.conversation_threading_file, 'w') as f:
+                json.dump(data, f, indent=2, cls=CoordinationJSONEncoder)
+            
+            logger.debug(f"Saved {len(self.conversation_threading)} conversation threads to storage")
+            
+        except Exception as e:
+            logger.error(f"Error saving conversation threading: {e}")
     
     def _save_processed_message_ids(self):
         """Save processed message IDs to persistent JSON storage"""
