@@ -77,10 +77,13 @@ class DeadLetterQueue:
         return (now_utc() - last_retry).total_seconds() > backoff_seconds
         
     def should_dead_letter(self, message_id: str) -> bool:
-        """Check if message has exceeded retry limit"""
+        """Check if message has exceeded retry limit (no side effects)"""
+        return self.retry_counts.get(message_id, 0) >= self.max_retries
+        
+    def record_retry_attempt(self, message_id: str):
+        """Record a retry attempt for a message"""
         self.retry_counts[message_id] = self.retry_counts.get(message_id, 0) + 1
         self.retry_timestamps[message_id] = now_utc()
-        return self.retry_counts[message_id] >= self.max_retries
         
     def add_to_dlq(self, message: 'CoordinationMessage', error: Exception):
         """Move message to dead letter queue with diagnostic information"""
@@ -1612,8 +1615,9 @@ class IntegratedCoordinationProtocol:
                 logger.debug(f"Skipping already processed message {message_id}")
                 continue
                 
-            # Check if should go to DLQ
+            # Check if message has exceeded retry limit (no side effects)
             if self.dlq.should_dead_letter(message_id):
+                logger.warning(f"Message {message_id} moved to DLQ after {self.dlq.retry_counts.get(message_id, 0)} attempts")
                 self.dlq.add_to_dlq(message, 
                     Exception(f"Max retries ({self.dlq.max_retries}) exceeded"))
                 # Mark as processed to prevent further attempts
@@ -1626,8 +1630,8 @@ class IntegratedCoordinationProtocol:
                 })
                 continue
                 
-            # Check if should wait for backoff
-            if not self.dlq.should_retry(message_id):
+            # Check if should wait for backoff (only if we've tried before)
+            if message_id in self.dlq.retry_counts and not self.dlq.should_retry(message_id):
                 logger.debug(f"Message {message_id} in backoff period, skipping")
                 continue
                 
@@ -1702,11 +1706,8 @@ class IntegratedCoordinationProtocol:
                     
             except json.JSONDecodeError as e:
                 logger.error(f"JSON parsing failed for {message_id}: {e}")
-                # Check if should DLQ
-                if self.dlq.should_dead_letter(message_id):
-                    self.dlq.add_to_dlq(message, e)
-                    self.processed_message_ids.add(message_id)
-                    self._save_processed_message_ids()
+                # Record retry attempt
+                self.dlq.record_retry_attempt(message_id)
                 processing_results.append({
                     'message_id': message_id,
                     'processed': False,
@@ -1717,6 +1718,8 @@ class IntegratedCoordinationProtocol:
             except Exception as e:
                 logger.error(f"Unexpected error processing {message_id}: {e}")
                 logger.error(traceback.format_exc())
+                # Record retry attempt
+                self.dlq.record_retry_attempt(message_id)
                 # Don't mark as processed - will retry unless DLQ limit hit
                 processing_results.append({
                     'message_id': message_id,
