@@ -2004,7 +2004,10 @@ class IntegratedCoordinationProtocol:
             logger.info(f"🔍 Looking for original request in conversation {message.conversation_id}")
             logger.info(f"📊 Conversation has {len(conversation)} messages")
             for i, msg in enumerate(conversation):
-                logger.info(f"  Message {i}: {msg.message_type} from {msg.from_agent.agent_id}")
+                try:
+                    logger.info(f"  Message {i}: {msg.message_type} from {msg.from_agent.agent_id}")
+                except (AttributeError, TypeError) as e:
+                    logger.warning(f"  Message {i}: {msg.message_type} from <malformed agent data> - {e}")
             
             original_request = self._find_original_request_in_conversation(conversation)
             
