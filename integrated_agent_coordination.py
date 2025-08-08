@@ -1203,6 +1203,17 @@ Protocol: {self.PROTOCOL_VERSION}
                     summary += f"• Constraints: {prefs['time_constraints']}\n"
         
         elif message.message_type == MessageType.SCHEDULE_PROPOSAL:
+            # Include meeting context if available
+            if 'meeting_context' in message.payload:
+                ctx = message.payload['meeting_context']
+                summary += f"• Meeting: {ctx.get('subject', 'Meeting')}\n"
+                summary += f"• Duration: {ctx.get('duration_minutes', 30)} minutes\n"
+                if 'attendees' in ctx:
+                    attendees = ', '.join(ctx['attendees'])
+                    summary += f"• Participants: {attendees}\n"
+                if 'description' in ctx and ctx['description']:
+                    summary += f"• Description: {ctx['description']}\n"
+            
             if 'proposed_times' in message.payload:
                 times = message.payload['proposed_times']
                 summary += f"• Available Options: {len(times)} time slots\n"
@@ -1226,21 +1237,40 @@ Protocol: {self.PROTOCOL_VERSION}
                     summary += f"• Schedule Note: {ctx['workload_note']}\n"
         
         elif message.message_type == MessageType.SCHEDULE_COUNTER_PROPOSAL:
-            if 'counter_times' in message.payload:
-                times = message.payload['counter_times']
+            # Include meeting context if available
+            if 'meeting_context' in message.payload:
+                ctx = message.payload['meeting_context']
+                summary += f"• Meeting: {ctx.get('subject', 'Meeting')}\n"
+                summary += f"• Duration: {ctx.get('duration_minutes', 30)} minutes\n"
+                if 'attendees' in ctx:
+                    attendees = ', '.join(ctx['attendees'])
+                    summary += f"• Participants: {attendees}\n"
+                if 'description' in ctx and ctx['description']:
+                    summary += f"• Description: {ctx['description']}\n"
+            
+            # Handle both 'counter_times' and 'counter_proposals' for compatibility
+            times_key = 'counter_proposals' if 'counter_proposals' in message.payload else 'counter_times'
+            if times_key in message.payload:
+                times = message.payload[times_key]
                 summary += f"• Alternative Options: {len(times)} time slots\n"
                 for i, time_slot in enumerate(times[:3], 1):
                     if isinstance(time_slot, dict):
                         start = time_slot.get('start_time', 'N/A')
-                        if start != 'N/A':
+                        end = time_slot.get('end_time', 'N/A')
+                        if start != 'N/A' and end != 'N/A':
                             try:
                                 start_dt = datetime.fromisoformat(start) if isinstance(start, str) else start
-                                summary += f"  Option {i}: {start_dt.strftime('%A, %B %d at %I:%M %p')}\n"
+                                end_dt = datetime.fromisoformat(end) if isinstance(end, str) else end
+                                summary += f"  Option {i}: {start_dt.strftime('%A, %B %d at %I:%M %p')} - {end_dt.strftime('%I:%M %p')}\n"
                             except:
-                                summary += f"  Option {i}: {start}\n"
+                                summary += f"  Option {i}: {start} - {end}\n"
+                if len(times) > 3:
+                    summary += f"  ... and {len(times) - 3} more options\n"
             
             if 'reason' in message.payload:
                 summary += f"• Reason: {message.payload['reason']}\n"
+            elif 'reasoning' in message.payload:
+                summary += f"• Reason: {message.payload['reasoning']}\n"
         
         elif message.message_type == MessageType.SCHEDULE_CONFIRMATION:
             if 'confirmed_time' in message.payload:
@@ -1775,16 +1805,27 @@ class IntegratedCoordinationProtocol:
         
         logger.debug(f"Created SCHEDULE_REQUEST with conversation_id: {message.conversation_id}")
         
+        # Store in active conversations BEFORE sending to ensure it's available for processing responses
+        conv_id = message.conversation_id
+        if conv_id not in self.active_conversations:
+            self.active_conversations[conv_id] = []
+        self.active_conversations[conv_id].append(message)
+        
+        # Persist active conversations immediately
+        self._save_active_conversations()
+        logger.info(f"📝 Stored SCHEDULE_REQUEST in active conversations for {conv_id}")
+        logger.debug(f"Meeting context stored: subject='{meeting_context.subject}', description='{meeting_context.description[:100]}...'")
+        
+        # Now send the message
         success = self.email_transport.send_coordination_message(message)
         
-        if success:
-            # Store in active conversations
-            conv_id = message.conversation_id
-            if conv_id not in self.active_conversations:
-                self.active_conversations[conv_id] = []
-            self.active_conversations[conv_id].append(message)
-            # Persist active conversations
+        if not success:
+            # If send failed, remove from active conversations
+            self.active_conversations[conv_id].remove(message)
+            if not self.active_conversations[conv_id]:  # Remove empty conversation
+                del self.active_conversations[conv_id]
             self._save_active_conversations()
+            logger.warning(f"❌ Failed to send SCHEDULE_REQUEST, removed from active conversations")
         
         return success
     
@@ -1985,8 +2026,12 @@ class IntegratedCoordinationProtocol:
                     'proposed_times': [self._serialize_timeslot(slot) for slot in proposed_times],
                     'proposal_confidence': max(slot.confidence_score for slot in proposed_times),
                     'sender_constraints': self._get_current_constraints(),
-                    'context_analysis': self._analyze_scheduling_context(meeting_context)
+                    'context_analysis': self._analyze_scheduling_context(meeting_context),
+                    'meeting_context': self._serialize_meeting_context(meeting_context)  # CRITICAL: Include meeting context
                 }
+                
+                logger.info(f"📋 Including meeting context in SCHEDULE_PROPOSAL: subject='{meeting_context.subject}'")
+                logger.debug(f"Meeting context details: {self._serialize_meeting_context(meeting_context)}")
                 
                 return CoordinationMessage(
                     message_id="",
@@ -2334,7 +2379,8 @@ class IntegratedCoordinationProtocol:
                             'original_counter_proposal_id': message.message_id,
                             'counter_proposals': [self._serialize_timeslot(slot) for slot in new_proposals],
                             'reasoning': 'Suggesting new alternatives based on updated availability',
-                            'negotiation_round': negotiation_rounds + 1
+                            'negotiation_round': negotiation_rounds + 1,
+                            'meeting_context': self._serialize_meeting_context(meeting_context)  # CRITICAL: Include meeting context
                         }
                         
                         return CoordinationMessage(
@@ -3731,6 +3777,15 @@ class IntegratedCoordinationProtocol:
         if len(reason.strip()) < 10:
             raise ValueError(f"Rejection reason too brief: '{reason}'. Please provide a more detailed explanation (at least 10 characters).")
         
+        # Extract meeting context from conversation for preservation
+        meeting_context = None
+        conversation = self.active_conversations.get(original_message.conversation_id, [])
+        for msg in conversation:
+            if msg.message_type == MessageType.SCHEDULE_REQUEST:
+                if 'meeting_context' in msg.payload:
+                    meeting_context = msg.payload['meeting_context']
+                    break
+        
         payload = {
             'original_message_id': original_message.message_id,
             'rejection_reason': reason.strip(),
@@ -3740,6 +3795,11 @@ class IntegratedCoordinationProtocol:
                 "Consider a shorter meeting duration"
             ]
         }
+        
+        # Include meeting context if found
+        if meeting_context:
+            payload['meeting_context'] = meeting_context
+            logger.info(f"📋 Including meeting context in SCHEDULE_REJECTION: subject='{meeting_context.get('subject', 'Unknown')}'")
         
         return CoordinationMessage(
             message_id="",

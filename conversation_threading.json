@@ -1,0 +1,230 @@
+{
+  "conversation_threading": {
+    "cd593d23-b05c-47d0-9b27-c85659ee066c": {
+      "message_ids": [
+        "<CAFh9WrMOw7tOHkJ3rXdDNYhKdJ+jaF+1nTOOcyG=s7KH7J8hZg@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Vibe Coding Best Practices Discussion",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "1988677491ea7b91",
+      "latest_message_id": "<CAFh9WrMOw7tOHkJ3rXdDNYhKdJ+jaF+1nTOOcyG=s7KH7J8hZg@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "2524c9b8-2a45-4479-80e7-30ba4507dc6d": {
+      "message_ids": [
+        "<CAFh9WrPH+GNS3XWhFQk1pW2jBcTqg12r8mA-tqENAApBHrCGCQ@mail.gmail.com>",
+        "<CAAn+4w0vMWYPUbTB+jQHGDoJb3irfc=nOm=52kO+bgZZNQJQaQ@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Vibe Coding Team Tutorials Discussion",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "198867f547a8fb5d",
+      "latest_message_id": "<CAAn+4w0vMWYPUbTB+jQHGDoJb3irfc=nOm=52kO+bgZZNQJQaQ@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "7d291aa3-2364-4911-91ab-acb048585559": {
+      "message_ids": [
+        "<CAFh9WrOgCVqJF+Biuv_2_H5uiyoQGrLQkb91Q9c5894QtvK+vw@mail.gmail.com>",
+        "<CAAn+4w3fQXBhd=_TPe6KdGyxZSxsmjxee7YArNmQrFkTMdcrRQ@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Test Coordination Fix",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "19886b2602fd746f",
+      "latest_message_id": "<CAAn+4w3fQXBhd=_TPe6KdGyxZSxsmjxee7YArNmQrFkTMdcrRQ@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "0a0bff0d-2d22-457c-bf59-fb04c231e775": {
+      "message_ids": [
+        "<CAAn+4w35R5dabk7VgKFfJ855ZbiYEGbS2+HoVYbnPhxhrU3o9g@mail.gmail.com>",
+        "<CAFh9WrO4qtAojhYw+zkHmccujhsTuMVzFf2NwSbD1_Cnvh8NHw@mail.gmail.com>",
+        "<CAAn+4w3QSnKGTFk4ocvpBV4Hs6Muo4nPj-oY_8S9w5pLctbcgQ@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Coordination",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "19886bcae58502ec",
+      "latest_message_id": "<CAAn+4w3QSnKGTFk4ocvpBV4Hs6Muo4nPj-oY_8S9w5pLctbcgQ@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "806bbf3e-6131-4670-9d3d-68b6e70ab6a1": {
+      "message_ids": [
+        "<CAAn+4w2=cZrhnHw4GciT4xfdBOFUp9ye8OEmACy-iOHcq2yFvw@mail.gmail.com>",
+        "<CAFh9WrNu9Uxceq84GcEmTR9F_PdtqCBx8fMVaiECMrXBJBQptQ@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Coordination",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "19886cf17022e544",
+      "latest_message_id": "<CAFh9WrNu9Uxceq84GcEmTR9F_PdtqCBx8fMVaiECMrXBJBQptQ@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "cbfe9465-661f-465e-b9fd-c78306bf5250": {
+      "message_ids": [
+        "<CAAn+4w2S92DYwVznJzdAUZb+ApEbgtARfwFBfAQjEdopH=9AJw@mail.gmail.com>",
+        "<CAFh9WrPGkeBvGFZsYFUTP_6ukfBZpbpQe2oJ28RGD2Sc210sGg@mail.gmail.com>",
+        "<CAAn+4w1nrd9QXTNQz6zu9MLgwdJoiP3mzp=DhqXi5Q_KX2ZrUg@mail.gmail.com>",
+        "<CAFh9WrPz1n18oB92JexCavEKJ_wgV+qrnqETHZNnn=4NwVc-xQ@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Coordination",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "19886d5f76e29fb5",
+      "latest_message_id": "<CAFh9WrPz1n18oB92JexCavEKJ_wgV+qrnqETHZNnn=4NwVc-xQ@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "8d9a24b4-7243-4b52-b833-20a127638e9b": {
+      "message_ids": [
+        "<CAAn+4w3+yjNX=RRv7tP72VS3mR+jq3LnKLbyNCNsDovZ1g-OtQ@mail.gmail.com>",
+        "<CAFh9WrPubsFQk4UxtJEFZACfhaVUkYJzmJkGh5o9Tx2GM_mJXA@mail.gmail.com>",
+        "<CAAn+4w3ha143z0Gm81UYX6xSf9UweWTrEZ=uS7Ko0O1tQHZDCA@mail.gmail.com>",
+        "<CAFh9WrMM2yGuKNnUXBfco=AMMmnWN0U5iim-EDujFRJx9F_iOg@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Coordination",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "19886f586d4e9d83",
+      "latest_message_id": "<CAFh9WrMM2yGuKNnUXBfco=AMMmnWN0U5iim-EDujFRJx9F_iOg@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "5f176e99-6d77-4ba6-8585-975233123b9b": {
+      "message_ids": [
+        "<CAAn+4w1dVGTzPx9QTvS_H1a_4QK-g6u9kFNc7HpLAixvnbCdCQ@mail.gmail.com>",
+        "<CAFh9WrNdR6ps0T804HTTD-6HaJL-LjusgArXQZaVPVq-AYzBPQ@mail.gmail.com>",
+        "<CAAn+4w0u1wR-sO2Qq97iPJ27M_qxVcQ8N3m6T-0Z8Fuj14Vpcw@mail.gmail.com>",
+        "<CAFh9WrM3K9WBZR6+4a9ejh0rRDkZFHoKU=Jncvh8_mumR7F1Qw@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Coordination",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "1988706d5340da1f",
+      "latest_message_id": "<CAFh9WrM3K9WBZR6+4a9ejh0rRDkZFHoKU=Jncvh8_mumR7F1Qw@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "713e2eef-44a8-44be-bd71-56b7526e8c0c": {
+      "message_ids": [
+        "<CAFh9WrPRivqBM0gVBds9-LSJqS+QvB7-RSeBkYXDxDNorDP2oQ@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Counter-Proposal Fix Test",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "198872ab4af42b95",
+      "latest_message_id": "<CAFh9WrPRivqBM0gVBds9-LSJqS+QvB7-RSeBkYXDxDNorDP2oQ@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "c57c3a44-d62b-4b84-a282-09ebb0bcd2b8": {
+      "message_ids": [
+        "<CAAn+4w1xJwOxnL+aeqFhMdnWWD5dsa23MgBMO_bAb6ju1QjafQ@mail.gmail.com>",
+        "<CAFh9WrPEp1rWZpS_m3cX9xnF8XgdoMXf1zb0yhMGvw85i0aWtA@mail.gmail.com>",
+        "<CAAn+4w18LeVsJSZZB=Dy--1i+6tAYvwtVmAd0zEnKUNcUCxMWg@mail.gmail.com>",
+        "<CAFh9WrPEM0NcqLYnsgopu=SCSm6DV=+MEpKrZM26vKDncEMV_A@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Coordination",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "19887323842e9ea0",
+      "latest_message_id": "<CAFh9WrPEM0NcqLYnsgopu=SCSm6DV=+MEpKrZM26vKDncEMV_A@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "444b71ad-7b90-444b-9200-a9cd57e9ad7a": {
+      "message_ids": [
+        "<CAFh9WrMxvwg2cw2DyDgoUMNtATdavGD+HZnOLBSiVq_9A6fq_A@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Vibing Familiars Discussion",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "198874804ede11d9",
+      "latest_message_id": "<CAFh9WrMxvwg2cw2DyDgoUMNtATdavGD+HZnOLBSiVq_9A6fq_A@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "9510eb10-5506-426f-93da-55c87f40204b": {
+      "message_ids": [
+        "<CAAn+4w3kDEtD2ebidLbuZEAzHuC1PtvRQCtaOmtm5G5XiQny7Q@mail.gmail.com>",
+        "<CAFh9WrNrH-WkkqW+mxezNqsCZrr-YH56mvAo1q4sDM+EtW8uuw@mail.gmail.com>",
+        "<CAAn+4w19O6dWDRebT5Cpm9UiTeMpuHn1FT0vk3k_3Rn3zzyViQ@mail.gmail.com>",
+        "<CAFh9WrN2A4wb2ntmE=TqsK6EZtD1bsRkWtwZ+L6Z7mQsG4QEKg@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Coordination",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "1988758f5e348234",
+      "latest_message_id": "<CAFh9WrN2A4wb2ntmE=TqsK6EZtD1bsRkWtwZ+L6Z7mQsG4QEKg@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "75e23e0a-c7df-4805-b940-06bb3aef13be": {
+      "message_ids": [
+        "<CAAn+4w2wTRrF7hdQq0qJPms3LBrCtqJEUvS0ac+3N9j_U3DcNQ@mail.gmail.com>",
+        "<CAFh9WrPBuXgNSA4ur2cz3Mi7A7gvF8Vy4C1pcokXRM2mooYyCQ@mail.gmail.com>",
+        "<CAAn+4w24KECHHMZswcs5r6UgaUtWwpfUXV7CMHcq1jnjSpvg2A@mail.gmail.com>",
+        "<CAFh9WrMHXYKkiuDLVabwYvB3a78hPMtPop8t60Rz6zuSN1_52A@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Coordination",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "198879fc4fc0a5f9",
+      "latest_message_id": "<CAFh9WrMHXYKkiuDLVabwYvB3a78hPMtPop8t60Rz6zuSN1_52A@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "058e57d9-269b-4679-b588-b1516184d519": {
+      "message_ids": [
+        "<CAAn+4w2rGqiyeoX+4qua96heb0qK5S_Dc=LSesmDH3Hm-8Vrgg@mail.gmail.com>",
+        "<CAFh9WrM=1A5SqURdtWnYAV_QKTjuitkfE7JOcTZ9v+Myh4CwyA@mail.gmail.com>",
+        "<CAAn+4w0mOPWfEHk297WHhzr=ne==BzQZ90FwLbkFjiVTvzQ9tA@mail.gmail.com>",
+        "<CAFh9WrNCwGVc604yrA2ofQ8Z+cxyC6O8bSyQ73Ot90izjza+bw@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Coordination",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "19887cad2243122f",
+      "latest_message_id": "<CAFh9WrNCwGVc604yrA2ofQ8Z+cxyC6O8bSyQ73Ot90izjza+bw@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    },
+    "01a08fb7-a883-4f63-a019-a80d9727951e": {
+      "message_ids": [
+        "<CAAn+4w3NuPxr+tm82M7zuxAVwjrWdRBF87tcGCe5gEbUxQKsmw@mail.gmail.com>",
+        "<CAFh9WrN-E7fr5EDUQDZOT5LjPkpFY+hhAMETt2_2tLdePCeqew@mail.gmail.com>",
+        "<CAAn+4w0Cc15TP4gd4FFP9xK5ShFt5wLzLx2Cwt=xCGKc3=5L1g@mail.gmail.com>",
+        "<CAFh9WrMn2Zf9EG2CZU_jwSwXMGWRbRbJyQvBe3Frk25AdzCrQw@mail.gmail.com>"
+      ],
+      "subject": "[CLAUDE-COORD] Coordination",
+      "participants": [
+        "zach@empire.email",
+        "zacharyschlosser@gmail.com"
+      ],
+      "thread_id": "198898c81eb63af7",
+      "latest_message_id": "<CAFh9WrMn2Zf9EG2CZU_jwSwXMGWRbRbJyQvBe3Frk25AdzCrQw@mail.gmail.com>",
+      "last_updated": "2025-08-08T12:01:18.942521+00:00"
+    }
+  },
+  "last_updated": "2025-08-08T12:01:18.942521+00:00",
+  "last_cleanup": "2025-08-08T12:01:18.942521+00:00"
+}
