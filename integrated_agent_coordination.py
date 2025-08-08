@@ -982,6 +982,68 @@ Protocol: {self.PROTOCOL_VERSION}
                     reason = tech_data['Rejection Reason']
                     if reason and reason.strip():
                         payload['rejection_reason'] = reason.strip()
+                        
+            elif message_type == 'schedule_counter_proposal':
+                # Extract structured proposed times data (same as schedule_proposal)
+                if 'Proposed Times Data' in tech_data:
+                    try:
+                        proposed_times_json = tech_data['Proposed Times Data']
+                        if proposed_times_json and proposed_times_json.strip():
+                            proposed_times = json.loads(proposed_times_json)
+                            if isinstance(proposed_times, list) and len(proposed_times) > 0:
+                                # Validate each time slot has required fields
+                                valid_times = []
+                                for i, time_slot in enumerate(proposed_times):
+                                    if isinstance(time_slot, dict) and 'start_time' in time_slot and 'end_time' in time_slot:
+                                        # Ensure required fields with defaults
+                                        time_slot.setdefault('confidence_score', 0.8)
+                                        time_slot.setdefault('conflicts', [])
+                                        time_slot.setdefault('context_score', {})
+                                        valid_times.append(time_slot)
+                                    else:
+                                        logger.warning(f"Invalid counter-proposal time slot at index {i}: {time_slot}")
+                                
+                                if valid_times:
+                                    payload['proposed_times'] = valid_times
+                                    logger.info(f"Extracted {len(valid_times)} valid time slots from counter-proposal")
+                                else:
+                                    logger.warning("No valid time slots found in counter-proposal data")
+                            else:
+                                logger.warning("Counter-proposal times JSON is not a valid list")
+                        else:
+                            logger.warning("Proposed Times Data is empty in counter-proposal")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse counter-proposal times JSON: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing counter-proposal times data: {e}")
+                
+                # Extract other counter-proposal specific fields
+                if 'Counter Proposal Reason' in tech_data:
+                    reason = tech_data['Counter Proposal Reason']
+                    if reason and reason.strip():
+                        payload['counter_proposal_reason'] = reason.strip()
+                
+                if 'Proposal Confidence' in tech_data:
+                    try:
+                        confidence_value = tech_data['Proposal Confidence']
+                        if confidence_value and confidence_value.strip():
+                            payload['proposal_confidence'] = float(confidence_value)
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Invalid counter-proposal confidence value: {e}")
+                
+                if 'Meeting Context' in tech_data:
+                    try:
+                        meeting_context_json = tech_data['Meeting Context']
+                        if meeting_context_json and meeting_context_json.strip():
+                            meeting_context = json.loads(meeting_context_json)
+                            if isinstance(meeting_context, dict):
+                                payload['meeting_context'] = meeting_context
+                            else:
+                                logger.warning("Counter-proposal meeting context JSON is not a valid object")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse counter-proposal meeting context JSON: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing counter-proposal meeting context: {e}")
             
         except Exception as e:
             logger.error(f"Critical error extracting payload from technical data: {e}")
