@@ -1035,13 +1035,20 @@ Protocol: {self.PROTOCOL_VERSION}
                 return True
                 
             elif message_type == 'schedule_counter_proposal':
-                if 'counter_proposals' not in payload:
-                    logger.debug("Missing counter_proposals in schedule_counter_proposal payload")
+                # Check for both field names for compatibility
+                proposals_field = None
+                if 'counter_proposals' in payload:
+                    proposals_field = 'counter_proposals'
+                elif 'proposed_times' in payload:
+                    proposals_field = 'proposed_times'
+                
+                if not proposals_field:
+                    logger.debug("Missing counter_proposals or proposed_times in schedule_counter_proposal payload")
                     return False
                 
-                counter_proposals = payload['counter_proposals']
+                counter_proposals = payload[proposals_field]
                 if not isinstance(counter_proposals, list) or len(counter_proposals) == 0:
-                    logger.debug("counter_proposals is not a valid list or is empty")
+                    logger.debug(f"{proposals_field} is not a valid list or is empty")
                     return False
                 
                 # Validate each counter-proposal
@@ -2146,12 +2153,18 @@ class IntegratedCoordinationProtocol:
         logger.info(f"Processing schedule counter-proposal from {message.from_agent.agent_id}")
         
         try:
-            # Validate payload structure first
-            if not message.payload or "counter_proposals" not in message.payload:
-                logger.error("Schedule counter-proposal missing counter_proposals in payload")
+            # Validate payload structure first - check for both field names for compatibility
+            proposals_field = None
+            if message.payload and "counter_proposals" in message.payload:
+                proposals_field = "counter_proposals"
+            elif message.payload and "proposed_times" in message.payload:
+                proposals_field = "proposed_times"
+            
+            if not proposals_field:
+                logger.error("Schedule counter-proposal missing counter_proposals or proposed_times in payload")
                 return self._create_rejection_message(message, "Invalid counter-proposal format - missing time options")
             
-            counter_proposals_data = message.payload["counter_proposals"]
+            counter_proposals_data = message.payload[proposals_field]
             if not isinstance(counter_proposals_data, list) or len(counter_proposals_data) == 0:
                 logger.error("Schedule counter-proposal has invalid or empty counter_proposals")
                 return self._create_rejection_message(message, "Invalid counter-proposal format - no time options provided")
