@@ -2001,11 +2001,19 @@ class IntegratedCoordinationProtocol:
             
             # Get original request context for finding ALL our available times
             conversation = self.active_conversations.get(message.conversation_id, [])
+            logger.info(f"🔍 Looking for original request in conversation {message.conversation_id}")
+            logger.info(f"📊 Conversation has {len(conversation)} messages")
+            for i, msg in enumerate(conversation):
+                logger.info(f"  Message {i}: {msg.message_type} from {msg.from_agent.agent_id}")
+            
             original_request = self._find_original_request_in_conversation(conversation)
             
             if not original_request:
-                logger.warning("No original request found - handling as reverse-initiated proposal")
+                logger.warning("❌ No original request found - handling as reverse-initiated proposal")
+                logger.warning(f"Expected to find SCHEDULE_REQUEST but found message types: {[msg.message_type for msg in conversation]}")
                 return self._handle_reverse_proposal(message, proposed_times)
+            else:
+                logger.info(f"✅ Found original request: {original_request.message_id}")
             
             meeting_context = MeetingContext(**original_request.payload["meeting_context"])
             
