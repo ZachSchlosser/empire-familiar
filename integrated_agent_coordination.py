@@ -2865,16 +2865,22 @@ class IntegratedCoordinationProtocol:
                                       selected_time: TimeSlot) -> Dict[str, Any]:
         """Prepare calendar event details"""
         
+        logger.info("📅 Preparing calendar event details with enhanced features")
+        
         # Extract meeting context from original request
         conversation = self.active_conversations.get(proposal_message.conversation_id, [])
         meeting_context = None
         
+        logger.debug(f"Conversation has {len(conversation)} messages")
+        
         for msg in conversation:
             if msg.message_type == MessageType.SCHEDULE_REQUEST:
                 meeting_context = MeetingContext(**msg.payload.get("meeting_context", {}))
+                logger.debug(f"Found meeting context: subject='{meeting_context.subject}', type='{meeting_context.meeting_type}'")
                 break
         
         if not meeting_context:
+            logger.warning("No meeting context found in conversation, using defaults")
             meeting_context = MeetingContext(
                 meeting_type="coordination_meeting",
                 duration_minutes=30,
@@ -2899,7 +2905,7 @@ class IntegratedCoordinationProtocol:
         enhanced_title = self._generate_enhanced_title(meeting_context, attendees, conversation)
         enhanced_description = self._generate_enhanced_description(meeting_context, attendees, conversation, selected_time)
         
-        return {
+        event_details = {
             "summary": enhanced_title,
             "description": enhanced_description,
             "start_time": selected_time.start_time.isoformat(),
@@ -2908,12 +2914,23 @@ class IntegratedCoordinationProtocol:
             "coordinated_by_agents": True,
             "coordination_confidence": selected_time.confidence_score
         }
+        
+        logger.info("✅ Calendar event details prepared:")
+        logger.info(f"  - Title: '{event_details['summary']}'")
+        logger.info(f"  - Description length: {len(event_details['description'])} chars")
+        logger.info(f"  - Attendees: {event_details['attendees']}")
+        logger.info(f"  - Time: {selected_time.start_time.strftime('%Y-%m-%d %I:%M %p')}")
+        
+        return event_details
     
     def _generate_enhanced_title(self, meeting_context: MeetingContext, 
                                attendees: List[str], conversation: List[CoordinationMessage]) -> str:
         """Generate intelligent title with participants and meeting type"""
         
+        logger.info("🎯 Generating enhanced title for calendar event")
+        
         base_title = meeting_context.subject or "Agent Coordinated Meeting"
+        logger.debug(f"Base title: {base_title}")
         
         # Extract participant names (remove domain from email)
         participant_names = []
@@ -2922,8 +2939,11 @@ class IntegratedCoordinationProtocol:
                 name = email.split('@')[0].replace('.', ' ').title()
                 participant_names.append(name)
         
+        logger.debug(f"Participant names extracted: {participant_names}")
+        
         # Format meeting type for display
         meeting_type_display = meeting_context.meeting_type.replace('_', ' ').title()
+        logger.debug(f"Meeting type: {meeting_type_display}")
         
         # Build enhanced title: [Subject] | [Participants] | [Type]
         title_parts = [base_title]
@@ -2939,12 +2959,16 @@ class IntegratedCoordinationProtocol:
         if meeting_type_display and meeting_type_display != "Coordination Meeting":
             title_parts.append(meeting_type_display)
         
-        return " | ".join(title_parts)
+        enhanced_title = " | ".join(title_parts)
+        logger.info(f"✅ Enhanced title generated: '{enhanced_title}'")
+        return enhanced_title
     
     def _generate_enhanced_description(self, meeting_context: MeetingContext, 
                                      attendees: List[str], conversation: List[CoordinationMessage],
                                      selected_time: TimeSlot) -> str:
         """Generate rich context description for calendar event"""
+        
+        logger.info("📝 Generating enhanced description for calendar event")
         
         description_parts = []
         
@@ -2953,6 +2977,7 @@ class IntegratedCoordinationProtocol:
         
         if meeting_context.description:
             description_parts.append(f"• Purpose: {meeting_context.description}")
+            logger.debug(f"Meeting purpose: {meeting_context.description}")
         
         meeting_type_display = meeting_context.meeting_type.replace('_', ' ').title()
         description_parts.append(f"• Type: {meeting_type_display}")
@@ -3022,7 +3047,10 @@ class IntegratedCoordinationProtocol:
         description_parts.append("---")
         description_parts.append("🤖 Coordinated by Claude Code agents")
         
-        return "\n".join(description_parts)
+        enhanced_description = "\n".join(description_parts)
+        logger.info(f"✅ Enhanced description generated ({len(enhanced_description)} chars)")
+        logger.debug(f"Description preview: {enhanced_description[:200]}...")
+        return enhanced_description
     
     def _count_alternatives_from_conversation(self, conversation: List[CoordinationMessage]) -> int:
         """Count how many alternative times were considered during coordination"""
@@ -3040,11 +3068,14 @@ class IntegratedCoordinationProtocol:
     
     def _extract_all_links(self, conversation: List[CoordinationMessage]) -> List[str]:
         """Extract all HTTP/HTTPS links from coordination messages and email content"""
+        logger.info("🔗 Extracting links from coordination conversation")
         links = []
         import re
         
         # Comprehensive URL pattern to catch all HTTP/HTTPS links
         url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+[^\s<>"{}|\\^`\[\].,;:!?)]'
+        
+        logger.debug(f"Searching through {len(conversation)} coordination messages")
         
         for msg in conversation:
             # Search message payload for links
@@ -3071,6 +3102,8 @@ class IntegratedCoordinationProtocol:
         
         # Remove duplicates and return ALL links (no artificial limit)
         unique_links = list(set(links))
+        logger.debug(f"Found {len(links)} total links, {len(unique_links)} unique")
+        
         # Clean up any malformed URLs that might have trailing punctuation
         cleaned_links = []
         for link in unique_links:
@@ -3078,6 +3111,12 @@ class IntegratedCoordinationProtocol:
             link = link.rstrip('.,;:!?)')
             if link and len(link) > 10:  # Basic sanity check
                 cleaned_links.append(link)
+        
+        logger.info(f"✅ Extracted {len(cleaned_links)} links from conversation")
+        if cleaned_links:
+            logger.debug(f"Links found: {cleaned_links}")
+        else:
+            logger.warning("⚠️  No links found in coordination conversation")
         
         return cleaned_links
     
@@ -3219,6 +3258,12 @@ class IntegratedCoordinationProtocol:
                     return True  # Consider this a success since the event exists
             
             # Create the calendar event with all attendees
+            logger.info("📤 Sending event to Google Calendar API:")
+            logger.info(f"  - Title: '{event_title}'")
+            logger.info(f"  - Description provided: {'Yes' if event_details.get('description') else 'No'}")
+            logger.info(f"  - Description length: {len(event_details.get('description', ''))} chars")
+            logger.debug(f"  - Full description:\n{event_details.get('description', '')[:500]}...")
+            
             event_created = self.calendar_manager.create_event(
                 title=event_title,
                 start_time=confirmed_time.start_time,
