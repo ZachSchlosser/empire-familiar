@@ -633,17 +633,41 @@ Protocol: {self.PROTOCOL_VERSION}
                 proposed_times = message.payload['proposed_times']
                 logger.info(f"Found proposed_times with {len(proposed_times)} slots in SCHEDULE_COUNTER_PROPOSAL")
                 structured_lines.append(f"Proposed Times Count: {len(proposed_times)}")
-                structured_lines.append("Proposed Times Data: " + json.dumps(proposed_times, cls=CoordinationJSONEncoder))
+                
+                try:
+                    json_data = json.dumps(proposed_times, cls=CoordinationJSONEncoder)
+                    structured_lines.append("Proposed Times Data: " + json_data)
+                    logger.info("✅ Counter-proposal JSON serialization successful")
+                except Exception as e:
+                    logger.error(f"❌ Counter-proposal JSON serialization failed: {e}")
+                    logger.error(f"Problematic data type: {type(proposed_times)}")
+                    logger.error(f"Problematic data length: {len(proposed_times) if hasattr(proposed_times, '__len__') else 'N/A'}")
+                    if proposed_times:
+                        logger.error(f"First slot type: {type(proposed_times[0])}")
+                        logger.error(f"First slot: {proposed_times[0]}")
+                    # Add fallback data for debugging
+                    structured_lines.append(f"Proposed Times Data: [SERIALIZATION_ERROR: {str(e)}]")
                 
             if 'proposal_confidence' in message.payload:
-                structured_lines.append(f"Proposal Confidence: {message.payload['proposal_confidence']}")
+                try:
+                    structured_lines.append(f"Proposal Confidence: {message.payload['proposal_confidence']}")
+                except Exception as e:
+                    logger.error(f"Error adding proposal_confidence: {e}")
                 
             if 'counter_proposal_reason' in message.payload:
-                structured_lines.append(f"Counter Proposal Reason: {message.payload['counter_proposal_reason']}")
+                try:
+                    structured_lines.append(f"Counter Proposal Reason: {message.payload['counter_proposal_reason']}")
+                except Exception as e:
+                    logger.error(f"Error adding counter_proposal_reason: {e}")
                 
             if 'meeting_context' in message.payload:
-                meeting_context = message.payload['meeting_context']
-                structured_lines.append("Meeting Context: " + json.dumps(meeting_context, cls=CoordinationJSONEncoder))
+                try:
+                    meeting_context = message.payload['meeting_context']
+                    json_data = json.dumps(meeting_context, cls=CoordinationJSONEncoder)
+                    structured_lines.append("Meeting Context: " + json_data)
+                except Exception as e:
+                    logger.error(f"Error serializing meeting_context: {e}")
+                    structured_lines.append(f"Meeting Context: [SERIALIZATION_ERROR: {str(e)}]")
         
         # Return formatted structured data section
         if structured_lines:
