@@ -278,28 +278,25 @@ schedule_meeting_with_agent(
     duration_minutes=60
 )
 
-# With natural language date range - Claude should parse first
+# IMPORTANT: With natural language date ranges, ALWAYS use coordinate_intelligent_meeting
 # Example: User says "schedule for the week of August 11"
-# Claude should parse this into specific dates:
-from datetime import datetime
-schedule_meeting_with_agent(
-    target_email="colleague@company.com",
-    meeting_subject="Project Planning",
-    duration_minutes=60,
-    date_range="the week of August 11"  # Include original for context
-)
-
-# For more precise control, Claude can pass parsed dates directly:
 from integrated_agent_coordination import coordinate_intelligent_meeting
+from datetime import datetime
+
+# ✅ CORRECT - Parse dates and use preferred_dates parameter
 coordinate_intelligent_meeting(
     target_agent_email="colleague@company.com",
     meeting_subject="Project Planning",
     duration_minutes=60,
+    description="Project planning meeting. Requested timeframe: the week of August 11",
     preferred_dates={
-        'start_date': '2024-08-11',  # Claude parses "week of August 11" 
-        'end_date': '2024-08-17'     # to actual date range
+        'start_date': '2025-08-11',  # Monday of that week
+        'end_date': '2025-08-17'     # Sunday of that week
     }
 )
+
+# Note: The schedule_meeting_with_agent function with date_range parameter
+# won't properly communicate dates to the other agent's system!
 ```
 
 **Quick coordination functions:**
@@ -322,6 +319,51 @@ python3 agent_email_monitor.py monitor 0    # continuous
 - "Setup coordination for [name] with email [email]" 
 - "Check for agent coordination messages"
 - "Update my coordination context to heavy workload"
+
+### IMPORTANT: Date Parsing for Agent Coordination
+When a user requests to schedule a meeting with specific date ranges (like "the week of August 18"), you MUST parse these dates before sending the coordination request:
+
+**ALWAYS follow these steps:**
+1. Parse natural language dates into specific start and end dates
+2. Use `coordinate_intelligent_meeting` with the `preferred_dates` parameter
+3. Include the original date expression in the description for context
+
+**Date parsing examples:**
+- "the week of August 18" → Parse to Monday-Sunday of that week:
+  - start_date: "2025-08-18" (Monday)
+  - end_date: "2025-08-24" (Sunday)
+- "next week" → Calculate from current date
+- "this week" → Current Monday through Sunday
+- "August 11-15" → start_date: "2025-08-11", end_date: "2025-08-15"
+
+**Correct implementation:**
+```python
+from integrated_agent_coordination import coordinate_intelligent_meeting
+from datetime import datetime
+
+# When user says: "Schedule meeting for the week of August 18"
+coordinate_intelligent_meeting(
+    target_agent_email="colleague@company.com",
+    meeting_subject="Project Discussion",
+    duration_minutes=60,
+    description="Meeting to discuss project. Requested timeframe: the week of August 18",
+    preferred_dates={
+        'start_date': '2025-08-18',  # Monday
+        'end_date': '2025-08-24'     # Sunday
+    }
+)
+```
+
+**NEVER do this:**
+```python
+# ❌ WRONG - Don't just put the date in description
+schedule_meeting_with_agent(
+    target_email="colleague@company.com",
+    meeting_subject="Project Discussion",
+    duration_minutes=60,
+    date_range="the week of August 18"  # This won't be parsed by the system!
+)
+```
 
 ## Team Member Coordination Setup
 
