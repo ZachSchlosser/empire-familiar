@@ -1782,7 +1782,7 @@ class IntegratedCoordinationProtocol:
         return start, end
     
     def send_schedule_request(self, target_agent_email: str, meeting_context: MeetingContext,
-                            time_preferences: List[str] = None) -> bool:
+                            time_preferences: List[str] = None, preferred_dates: Dict[str, Any] = None) -> bool:
         """Send scheduling request to target agent"""
         
         payload = {
@@ -1792,6 +1792,10 @@ class IntegratedCoordinationProtocol:
             'context_factors': self._serialize_context(self.current_context),
             'requested_options': 3
         }
+        
+        # Add preferred dates if provided
+        if preferred_dates:
+            payload['preferred_dates'] = preferred_dates
         
         message = CoordinationMessage(
             message_id="",
@@ -2147,7 +2151,8 @@ class IntegratedCoordinationProtocol:
                     'selected_time': self._serialize_timeslot(best_time),
                     'confidence_score': best_time.confidence_score,
                     'calendar_event_details': self._prepare_calendar_event_details(message, best_time),
-                    'mutual_times_found': 1
+                    'mutual_times_found': 1,
+                    'meeting_context': self._serialize_meeting_context(meeting_context)  # Include meeting context
                 }
                 
                 return CoordinationMessage(
@@ -2172,7 +2177,8 @@ class IntegratedCoordinationProtocol:
                     'confidence_score': best_time.confidence_score,
                     'calendar_event_details': self._prepare_calendar_event_details(message, best_time),
                     'mutual_times_found': len(mutual_times),
-                    'alternative_times': [self._serialize_timeslot(t) for t in mutual_times[1:3]]  # Include 2 alternatives
+                    'alternative_times': [self._serialize_timeslot(t) for t in mutual_times[1:3]],  # Include 2 alternatives
+                    'meeting_context': self._serialize_meeting_context(meeting_context)  # Include meeting context
                 }
                 
                 return CoordinationMessage(
@@ -2240,6 +2246,22 @@ class IntegratedCoordinationProtocol:
                 except Exception as archive_error:
                     logger.warning(f"⚠️ Archive failed but continuing: {archive_error}")
                 
+                # Extract meeting context to include in acknowledgment
+                meeting_context = None
+                
+                # First check if we have meeting context in the message payload
+                if message.payload and 'meeting_context' in message.payload:
+                    meeting_context = message.payload['meeting_context']
+                    logger.info(f"📋 Found meeting context in confirmation: subject='{meeting_context.get('subject', 'Unknown')}'")
+                else:
+                    # Fall back to finding it in the original request
+                    conversation = self.active_conversations.get(message.conversation_id, [])
+                    for msg in conversation:
+                        if msg.message_type == MessageType.SCHEDULE_REQUEST:
+                            meeting_context = msg.payload.get("meeting_context", {})
+                            logger.info(f"📋 Found meeting context from original request: subject='{meeting_context.get('subject', 'Unknown')}'")
+                            break
+                
                 # Send acknowledgment
                 payload = {
                     'confirmation_id': message.message_id,
@@ -2248,6 +2270,13 @@ class IntegratedCoordinationProtocol:
                     'coordination_complete': True,
                     'attendees_invited': event_details.get('attendees', [])
                 }
+                
+                # Include meeting context if found
+                if meeting_context:
+                    payload['meeting_context'] = meeting_context
+                    logger.info(f"📋 Including meeting context in COORDINATION_ACK: subject='{meeting_context.get('subject', 'Unknown')}'")
+                else:
+                    logger.warning("⚠️ No meeting context found for COORDINATION_ACK")
                 
                 return CoordinationMessage(
                     message_id="",
@@ -2262,6 +2291,22 @@ class IntegratedCoordinationProtocol:
             else:
                 logger.warning("⚠️ Calendar event creation failed, but coordination continues")
                 
+                # Extract meeting context to include in acknowledgment (same logic as above)
+                meeting_context = None
+                
+                # First check if we have meeting context in the message payload
+                if message.payload and 'meeting_context' in message.payload:
+                    meeting_context = message.payload['meeting_context']
+                    logger.info(f"📋 Found meeting context in confirmation: subject='{meeting_context.get('subject', 'Unknown')}'")
+                else:
+                    # Fall back to finding it in the original request
+                    conversation = self.active_conversations.get(message.conversation_id, [])
+                    for msg in conversation:
+                        if msg.message_type == MessageType.SCHEDULE_REQUEST:
+                            meeting_context = msg.payload.get("meeting_context", {})
+                            logger.info(f"📋 Found meeting context from original request: subject='{meeting_context.get('subject', 'Unknown')}'")
+                            break
+                
                 # Send acknowledgment even if calendar creation failed
                 payload = {
                     'confirmation_id': message.message_id,
@@ -2270,6 +2315,13 @@ class IntegratedCoordinationProtocol:
                     'coordination_complete': True,
                     'error': 'Calendar event creation failed'
                 }
+                
+                # Include meeting context if found
+                if meeting_context:
+                    payload['meeting_context'] = meeting_context
+                    logger.info(f"📋 Including meeting context in COORDINATION_ACK: subject='{meeting_context.get('subject', 'Unknown')}'")
+                else:
+                    logger.warning("⚠️ No meeting context found for COORDINATION_ACK")
                 
                 return CoordinationMessage(
                     message_id="",
@@ -2350,12 +2402,27 @@ class IntegratedCoordinationProtocol:
             # Normal counter-proposal evaluation
             if best_option and best_option.confidence_score > 0.6:  # Lower threshold for counter-proposals
                 # Accept the counter-proposal
+                # Extract meeting context from conversation
+                original_request = self._find_original_request_in_conversation(conversation)
+                meeting_context_dict = None
+                if original_request and 'meeting_context' in original_request.payload:
+                    meeting_context = MeetingContext(**original_request.payload["meeting_context"])
+                    meeting_context_dict = self._serialize_meeting_context(meeting_context)
+                elif message.payload and 'meeting_context' in message.payload:
+                    # Use meeting context from the counter-proposal if available
+                    meeting_context_dict = message.payload['meeting_context']
+                
                 payload = {
                     'proposal_message_id': message.message_id,
                     'selected_time': self._serialize_timeslot(best_option),
                     'confidence_score': best_option.confidence_score,
                     'calendar_event_details': self._prepare_calendar_event_details(message, best_option)
                 }
+                
+                # Include meeting context if found
+                if meeting_context_dict:
+                    payload['meeting_context'] = meeting_context_dict
+                    logger.info(f"📋 Including meeting context in SCHEDULE_CONFIRMATION: subject='{meeting_context_dict.get('subject', 'Unknown')}'")
                 
                 return CoordinationMessage(
                     message_id="",
@@ -2420,6 +2487,22 @@ class IntegratedCoordinationProtocol:
             
             logger.info(f"Meeting rejected: {rejection_reason}")
             
+            # Extract meeting context to include in acknowledgment
+            meeting_context = None
+            
+            # First check if we have meeting context in the message payload
+            if message.payload and 'meeting_context' in message.payload:
+                meeting_context = message.payload['meeting_context']
+                logger.info(f"📋 Found meeting context in rejection: subject='{meeting_context.get('subject', 'Unknown')}'")
+            else:
+                # Fall back to finding it in the original request
+                conversation = self.active_conversations.get(message.conversation_id, [])
+                for msg in conversation:
+                    if msg.message_type == MessageType.SCHEDULE_REQUEST:
+                        meeting_context = msg.payload.get("meeting_context", {})
+                        logger.info(f"📋 Found meeting context from original request: subject='{meeting_context.get('subject', 'Unknown')}'")
+                        break
+            
             # Send acknowledgment that rejection was received
             payload = {
                 'rejection_id': message.message_id,
@@ -2427,6 +2510,13 @@ class IntegratedCoordinationProtocol:
                 'coordination_complete': False,
                 'reason': rejection_reason
             }
+            
+            # Include meeting context if found
+            if meeting_context:
+                payload['meeting_context'] = meeting_context
+                logger.info(f"📋 Including meeting context in COORDINATION_ACK: subject='{meeting_context.get('subject', 'Unknown')}'")
+            else:
+                logger.warning("⚠️ No meeting context found for COORDINATION_ACK")
             
             return CoordinationMessage(
                 message_id="",
@@ -2522,11 +2612,19 @@ class IntegratedCoordinationProtocol:
             now = datetime.now(pytz.timezone('America/New_York'))
             time_preferences = request_payload.get("time_preferences", ["morning", "afternoon"])
             
-            # Check if time_preferences contains natural language time expressions
+            # Check for preferred_dates in payload first
             search_start = now
             search_end = now + timedelta(days=7)  # Default: 7 days
             
-            if time_preferences and isinstance(time_preferences, list) and time_preferences:
+            if 'preferred_dates' in request_payload and request_payload['preferred_dates']:
+                # Use provided date range
+                preferred_dates = request_payload['preferred_dates']
+                if 'start_date' in preferred_dates:
+                    search_start = self._parse_date_string(preferred_dates['start_date'])
+                if 'end_date' in preferred_dates:
+                    search_end = self._parse_date_string(preferred_dates['end_date'])
+                logger.info(f"Using preferred dates: {search_start.date()} to {search_end.date()}")
+            elif time_preferences and isinstance(time_preferences, list) and time_preferences:
                 # Check if first preference is a natural language expression
                 first_pref = time_preferences[0]
                 if any(expr in first_pref.lower() for expr in ['next week', 'this week', 'tomorrow', 'today', 'afternoon', 'morning']):
@@ -2753,6 +2851,47 @@ class IntegratedCoordinationProtocol:
             "conflicts": slot.conflicts,
             "context_score": slot.context_score
         }
+    
+    def _parse_date_string(self, date_str: Union[str, datetime]) -> datetime:
+        """Parse date string to timezone-aware datetime"""
+        if isinstance(date_str, datetime):
+            # If already a datetime, ensure it has timezone info
+            if date_str.tzinfo is None:
+                # Default to agent's timezone
+                tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
+                tz = pytz.timezone(tz_str)
+                date_str = tz.localize(date_str)
+            return date_str
+        
+        if isinstance(date_str, str):
+            # Try ISO format first
+            try:
+                parsed_date = datetime.fromisoformat(date_str)
+                # Ensure timezone info is preserved/added
+                if parsed_date.tzinfo is None:
+                    tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
+                    tz = pytz.timezone(tz_str)
+                    parsed_date = tz.localize(parsed_date)
+                return parsed_date
+            except ValueError:
+                pass
+            
+            # Try dateutil parser for more flexible parsing
+            try:
+                from dateutil import parser
+                parsed_date = parser.parse(date_str)
+                if parsed_date.tzinfo is None:
+                    tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
+                    tz = pytz.timezone(tz_str)
+                    parsed_date = tz.localize(parsed_date)
+                return parsed_date
+            except Exception:
+                pass
+        
+        # Default to current time if parsing fails
+        tz_str = getattr(self.preferences, 'timezone', 'America/New_York')
+        tz = pytz.timezone(tz_str)
+        return datetime.now(tz)
     
     def _parse_time_string(self, time_str: Union[str, datetime]) -> datetime:
         """Parse time string from either ISO format or human-readable format with timezone handling"""
@@ -3427,7 +3566,27 @@ class IntegratedCoordinationProtocol:
     def _extract_meeting_context_from_proposal(self, message: CoordinationMessage, proposed_times: List[TimeSlot]) -> MeetingContext:
         """Extract meeting context from proposal message when no original request exists"""
         
-        # Extract basic info from message
+        # FIRST: Check if the incoming message has meeting_context in payload
+        if message.payload and 'meeting_context' in message.payload:
+            meeting_ctx = message.payload['meeting_context']
+            if isinstance(meeting_ctx, dict):
+                logger.info(f"📋 Found meeting context in incoming message: subject='{meeting_ctx.get('subject', 'Unknown')}'")
+                # Use the meeting context from the message
+                return MeetingContext(**meeting_ctx)
+        
+        # SECOND: Check conversation history for any message with meeting context
+        conversation = self.active_conversations.get(message.conversation_id, [])
+        if conversation:
+            for msg in conversation:
+                if hasattr(msg, 'payload') and msg.payload and 'meeting_context' in msg.payload:
+                    ctx = msg.payload['meeting_context']
+                    if isinstance(ctx, dict):
+                        logger.info(f"📋 Found meeting context in conversation history: subject='{ctx.get('subject', 'Unknown')}'")
+                        return MeetingContext(**ctx)
+        
+        # FALLBACK: Extract basic info from message if no context found
+        logger.warning("⚠️ No meeting context found in message or conversation - creating generic context")
+        
         attendees = [self.agent_identity.user_email, message.from_agent.user_email]
         
         # Infer duration from proposed time slots if available
@@ -3438,25 +3597,12 @@ class IntegratedCoordinationProtocol:
             duration_delta = first_slot.end_time - first_slot.start_time
             duration_minutes = int(duration_delta.total_seconds() / 60)
         
-        # Try to extract subject from email subject or conversation
+        # Try to extract subject from context_analysis
         subject = "Coordination Meeting"  # Default
-        
-        # Check if there's any context in the message payload
         if message.payload and 'context_analysis' in message.payload:
             context = message.payload['context_analysis']
             if isinstance(context, dict) and 'meeting_purpose' in context:
                 subject = context['meeting_purpose']
-        
-        # Check conversation threading for subject hints
-        conversation = self.active_conversations.get(message.conversation_id, [])
-        if conversation:
-            for msg in conversation:
-                # Look for subject hints in any previous messages
-                if hasattr(msg, 'payload') and msg.payload and 'meeting_context' in msg.payload:
-                    ctx = msg.payload['meeting_context']
-                    if isinstance(ctx, dict) and 'subject' in ctx:
-                        subject = ctx['subject']
-                        break
         
         return MeetingContext(
             meeting_type="coordination_meeting",
@@ -4007,8 +4153,19 @@ def initialize_integrated_coordination_system(agent_config: Dict[str, Any] = Non
 def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str, 
                                  duration_minutes: int = 30, meeting_type: str = "1:1", 
                                  attendees: List[str] = None, time_preference: str = None,
-                                 description: str = None) -> bool:
-    """Send intelligent coordination request to target agent"""
+                                 description: str = None, preferred_dates: Dict[str, Any] = None) -> bool:
+    """Send intelligent coordination request to target agent
+    
+    Args:
+        target_agent_email: Target agent's email
+        meeting_subject: Meeting subject
+        duration_minutes: Duration in minutes
+        meeting_type: Type of meeting
+        attendees: List of attendees
+        time_preference: Time of day preference (morning, afternoon, evening)
+        description: Meeting description
+        preferred_dates: Dict with 'start_date' and 'end_date' for date range
+    """
     
     try:
         coordinator = get_integrated_coordination_system()
@@ -4032,7 +4189,7 @@ def coordinate_intelligent_meeting(target_agent_email: str, meeting_subject: str
     if time_preference:
         parsed_time_prefs = [time_preference]  # Convert to list for compatibility
     
-    return coordinator.send_schedule_request(target_agent_email, meeting_context, parsed_time_prefs)
+    return coordinator.send_schedule_request(target_agent_email, meeting_context, parsed_time_prefs, preferred_dates)
 
 def process_agent_coordination_messages() -> List[Dict[str, Any]]:
     """Process incoming coordination messages with intelligent responses"""

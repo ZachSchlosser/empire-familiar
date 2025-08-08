@@ -105,6 +105,12 @@ assistant = IntegratedGoogleAssistant()
 ### Natural Language Patterns
 When processing user requests, recognize these patterns:
 
+**Date Range Expressions (Claude should parse these)**:
+- "the week of August 11" → parse to start_date: "2024-08-11", end_date: "2024-08-17"
+- "next week" → parse to specific date range based on current date
+- "this week" → parse to Monday-Sunday of current week
+- "August 11-15" → parse to start_date: "2024-08-11", end_date: "2024-08-15"
+
 **Time Expressions**:
 - "tomorrow at 2 PM"
 - "next Tuesday at 10:30 AM" 
@@ -265,11 +271,34 @@ setup_coordination_for_user("Your Name", "your@email.com")
 ```python
 from coordination_helpers import schedule_meeting_with_agent
 
-# Coordinate with anyone by email
+# Basic coordination
 schedule_meeting_with_agent(
     target_email="colleague@company.com",
     meeting_subject="Project Planning", 
     duration_minutes=60
+)
+
+# With natural language date range - Claude should parse first
+# Example: User says "schedule for the week of August 11"
+# Claude should parse this into specific dates:
+from datetime import datetime
+schedule_meeting_with_agent(
+    target_email="colleague@company.com",
+    meeting_subject="Project Planning",
+    duration_minutes=60,
+    date_range="the week of August 11"  # Include original for context
+)
+
+# For more precise control, Claude can pass parsed dates directly:
+from integrated_agent_coordination import coordinate_intelligent_meeting
+coordinate_intelligent_meeting(
+    target_agent_email="colleague@company.com",
+    meeting_subject="Project Planning",
+    duration_minutes=60,
+    preferred_dates={
+        'start_date': '2024-08-11',  # Claude parses "week of August 11" 
+        'end_date': '2024-08-17'     # to actual date range
+    }
 )
 ```
 

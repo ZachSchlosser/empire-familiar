@@ -5,6 +5,7 @@ Email-agnostic coordination functions for easy use
 """
 
 from typing import Dict, Any, List, Optional
+import logging
 from integrated_agent_coordination import (
     initialize_integrated_coordination_system,
     coordinate_intelligent_meeting,
@@ -13,6 +14,9 @@ from integrated_agent_coordination import (
     update_coordination_context
 )
 from agent_config import get_agent_config, setup_agent_for_user
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # Global coordination system with config
 _current_config = None
@@ -43,8 +47,24 @@ def setup_coordination_for_user(user_name: str, user_email: str,
 def schedule_meeting_with_agent(target_email: str, meeting_subject: str, 
                                duration_minutes: int = 30, meeting_type: str = "1:1", 
                                attendees: List[str] = None, time_preference: str = None,
-                               description: str = None) -> Dict[str, Any]:
-    """Schedule meeting with any agent by email address"""
+                               description: str = None, date_range: str = None) -> Dict[str, Any]:
+    """Schedule meeting with any agent by email address
+    
+    Args:
+        target_email: Email address of target agent
+        meeting_subject: Subject of the meeting
+        duration_minutes: Duration in minutes (default: 30)
+        meeting_type: Type of meeting (default: "1:1")
+        attendees: List of attendee emails (default: sender and target)
+        time_preference: Time of day preference like "morning", "afternoon"
+        description: Meeting description (optional)
+        date_range: Natural language date range like "the week of August 11" (optional)
+    
+    Note: For natural language date ranges (like "the week of August 11"), 
+    the Claude agent should parse this into structured date information before
+    calling this function. The date_range parameter is stored in the meeting
+    context for reference but not automatically parsed by the system.
+    """
     
     # Ensure system is initialized
     if _current_config is None:
@@ -56,6 +76,24 @@ def schedule_meeting_with_agent(target_email: str, meeting_subject: str,
         current_user = _current_config["user_name"]
         current_email = _current_config["user_email"]
     
+    # If date_range is provided, include it in the description for context
+    enhanced_description = description or ""
+    if date_range:
+        if enhanced_description:
+            enhanced_description = f"{enhanced_description}\n\nRequested timeframe: {date_range}"
+        else:
+            enhanced_description = f"Requested timeframe: {date_range}"
+    
+    # Prepare preferred dates if date_range is provided
+    # This is where the Claude agent should parse natural language dates
+    preferred_dates = None
+    if date_range:
+        # For now, add a note that the Claude agent should parse this
+        # In a real implementation, the Claude agent would parse "the week of August 11"
+        # into specific start_date and end_date values before calling this function
+        logger.info(f"Note: Natural language date range '{date_range}' should be parsed by Claude agent")
+        logger.info("Claude should convert this to preferred_dates dict with 'start_date' and 'end_date' keys")
+    
     success = coordinate_intelligent_meeting(
         target_agent_email=target_email,
         meeting_subject=meeting_subject,
@@ -63,7 +101,8 @@ def schedule_meeting_with_agent(target_email: str, meeting_subject: str,
         meeting_type=meeting_type,
         attendees=attendees,
         time_preference=time_preference,
-        description=description
+        description=enhanced_description,
+        preferred_dates=preferred_dates
     )
     
     return {
