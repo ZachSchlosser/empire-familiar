@@ -2040,7 +2040,8 @@ class IntegratedCoordinationProtocol:
                 filtered_context['attendees'] = [message.from_agent.user_email, self.agent_identity.user_email]
             
             logger.info(f"Creating MeetingContext with fields: {list(filtered_context.keys())}")
-            meeting_context = MeetingContext(**filtered_context)
+            complete_context = self._ensure_meeting_context_complete(filtered_context, "1:1")
+            meeting_context = MeetingContext(**complete_context)
             time_preferences = message.payload.get("time_preferences", ["morning", "afternoon"])
             
             # Find ALL available times that match criteria (Step 2 of 3-step protocol)
@@ -2151,7 +2152,8 @@ class IntegratedCoordinationProtocol:
             else:
                 logger.info(f"✅ Found original request: {original_request.message_id}")
             
-            meeting_context = MeetingContext(**original_request.payload["meeting_context"])
+            complete_context = self._ensure_meeting_context_complete(original_request.payload["meeting_context"], "coordination_meeting")
+            meeting_context = MeetingContext(**complete_context)
             
             # Find ALL our available times that match criteria
             # BUG FIX: Use the date range from the incoming proposal, not the original request.
@@ -2440,7 +2442,8 @@ class IntegratedCoordinationProtocol:
                 # Generate new counter-proposals based on our calendar
                 meeting_context_dict = self._extract_meeting_context_from_conversation(conversation, message)
                 if meeting_context_dict:
-                    meeting_context = MeetingContext(**meeting_context_dict)
+                    complete_context = self._ensure_meeting_context_complete(meeting_context_dict, "counter_proposal")
+                    meeting_context = MeetingContext(**complete_context)
                     # Create synthetic request payload for finding available times
                     request_payload = {
                         'time_preferences': ['morning', 'afternoon'],
@@ -3069,7 +3072,8 @@ class IntegratedCoordinationProtocol:
         # Use the new helper to find meeting context from any message
         meeting_context_dict = self._extract_meeting_context_from_conversation(conversation, proposal_message)
         if meeting_context_dict:
-            meeting_context = MeetingContext(**meeting_context_dict)
+            complete_context = self._ensure_meeting_context_complete(meeting_context_dict, "confirmation")
+            meeting_context = MeetingContext(**complete_context)
             logger.debug(f"Found meeting context: subject='{meeting_context.subject}', type='{meeting_context.meeting_type}'")
         
         if not meeting_context:
@@ -3479,6 +3483,37 @@ class IntegratedCoordinationProtocol:
             logger.info("Continuing coordination despite calendar error")
             return False
     
+    def _ensure_meeting_context_complete(self, context_dict: Dict[str, Any], context_type: str = "coordination_meeting") -> Dict[str, Any]:
+        """Ensure meeting context dictionary has all required fields with appropriate defaults"""
+        # Create a copy to avoid modifying the original
+        complete_context = context_dict.copy()
+        
+        # Ensure meeting_type exists with context-appropriate default
+        if 'meeting_type' not in complete_context:
+            complete_context['meeting_type'] = context_type
+        
+        # Ensure other required fields exist with reasonable defaults
+        if 'duration_minutes' not in complete_context:
+            complete_context['duration_minutes'] = 60  # Default 1 hour
+        
+        if 'attendees' not in complete_context:
+            complete_context['attendees'] = []
+        
+        if 'subject' not in complete_context:
+            complete_context['subject'] = "Coordinated Meeting"
+        
+        # Optional fields with defaults
+        if 'description' not in complete_context:
+            complete_context['description'] = None
+        
+        if 'energy_requirement' not in complete_context:
+            complete_context['energy_requirement'] = "medium"
+        
+        if 'requires_preparation' not in complete_context:
+            complete_context['requires_preparation'] = False
+        
+        return complete_context
+    
     def _serialize_meeting_context(self, meeting_context: MeetingContext) -> Dict[str, Any]:
         """Serialize MeetingContext for JSON transmission"""
         return asdict(meeting_context)
@@ -3528,7 +3563,7 @@ class IntegratedCoordinationProtocol:
             ctx = current_message.payload['meeting_context']
             if isinstance(ctx, dict):
                 logger.info(f"📋 Found meeting context in current message: subject='{ctx.get('subject', 'Unknown')}'")
-                return ctx
+                return self._ensure_meeting_context_complete(ctx, "current_message")
         
         # Search conversation in reverse order (most recent first) for meeting_context
         if conversation:
@@ -3558,7 +3593,8 @@ class IntegratedCoordinationProtocol:
             meeting_context_dict = self._extract_meeting_context_from_conversation(conversation, message)
             
             if meeting_context_dict:
-                meeting_context = MeetingContext(**meeting_context_dict)
+                complete_context = self._ensure_meeting_context_complete(meeting_context_dict, "reverse_coordination")
+                meeting_context = MeetingContext(**complete_context)
                 logger.info(f"📋 Using meeting context from conversation: subject='{meeting_context.subject}'")
             else:
                 # Fallback: Extract basic info from message if no context found in conversation
@@ -3649,7 +3685,8 @@ class IntegratedCoordinationProtocol:
             if isinstance(meeting_ctx, dict):
                 logger.info(f"📋 Found meeting context in incoming message: subject='{meeting_ctx.get('subject', 'Unknown')}'")
                 # Use the meeting context from the message
-                return MeetingContext(**meeting_ctx)
+                complete_context = self._ensure_meeting_context_complete(meeting_ctx, "proposal_extraction")
+                return MeetingContext(**complete_context)
         
         # SECOND: Check conversation history for any message with meeting context
         conversation = self.active_conversations.get(message.conversation_id, [])
@@ -3659,7 +3696,8 @@ class IntegratedCoordinationProtocol:
                     ctx = msg.payload['meeting_context']
                     if isinstance(ctx, dict):
                         logger.info(f"📋 Found meeting context in conversation history: subject='{ctx.get('subject', 'Unknown')}'")
-                        return MeetingContext(**ctx)
+                        complete_context = self._ensure_meeting_context_complete(ctx, "history_extraction")
+                        return MeetingContext(**complete_context)
         
         # FALLBACK: Extract basic info from message if no context found
         logger.warning("⚠️ No meeting context found in message or conversation - creating generic context")
