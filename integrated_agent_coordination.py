@@ -2154,7 +2154,18 @@ class IntegratedCoordinationProtocol:
             meeting_context = MeetingContext(**original_request.payload["meeting_context"])
             
             # Find ALL our available times that match criteria
-            our_available_times = self._find_all_available_times(meeting_context, original_request.payload)
+            # BUG FIX: Use the date range from the incoming proposal, not the original request.
+            # This ensures we are checking for availability in the correct week.
+            proposal_start_date = min(slot.start_time for slot in proposed_times)
+            proposal_end_date = max(slot.end_time for slot in proposed_times)
+            
+            corrected_payload = original_request.payload.copy()
+            corrected_payload['preferred_dates'] = {
+                'start_date': proposal_start_date.isoformat(),
+                'end_date': proposal_end_date.isoformat()
+            }
+
+            our_available_times = self._find_all_available_times(meeting_context, corrected_payload)
             
             # Find mutual times (intersection of their proposal and our availability)
             mutual_times = self._find_mutual_availability(proposed_times, our_available_times)
