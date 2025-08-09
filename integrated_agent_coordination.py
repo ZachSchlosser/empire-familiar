@@ -618,6 +618,9 @@ Protocol: {self.PROTOCOL_VERSION}
             if 'time_preferences' in message.payload:
                 structured_lines.append("Time Preferences: " + json.dumps(message.payload['time_preferences'], cls=CoordinationJSONEncoder))
                 
+            if 'preferred_dates' in message.payload:
+                structured_lines.append("Preferred Dates: " + json.dumps(message.payload['preferred_dates'], cls=CoordinationJSONEncoder))
+                
         elif message.message_type == MessageType.SCHEDULE_CONFIRMATION:
             if 'selected_time' in message.payload:
                 selected_time = message.payload['selected_time']
@@ -957,6 +960,20 @@ Protocol: {self.PROTOCOL_VERSION}
                         logger.warning(f"Failed to parse time preferences JSON: {e}")
                     except Exception as e:
                         logger.error(f"Error processing time preferences: {e}")
+                
+                if 'Preferred Dates' in tech_data:
+                    try:
+                        preferred_dates_json = tech_data['Preferred Dates']
+                        if preferred_dates_json and preferred_dates_json.strip():
+                            preferred_dates = json.loads(preferred_dates_json)
+                            if isinstance(preferred_dates, dict):
+                                payload['preferred_dates'] = preferred_dates
+                            else:
+                                logger.warning("Preferred dates JSON is not a valid object")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse preferred dates JSON: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing preferred dates: {e}")
                         
             elif message_type == 'schedule_confirmation':
                 if 'Selected Time' in tech_data:
@@ -1201,6 +1218,11 @@ Protocol: {self.PROTOCOL_VERSION}
                     summary += f"• Preferred Times: {', '.join(prefs['preferred_times'])}\n"
                 if 'time_constraints' in prefs:
                     summary += f"• Constraints: {prefs['time_constraints']}\n"
+            
+            if 'preferred_dates' in message.payload:
+                dates = message.payload['preferred_dates']
+                if 'start_date' in dates and 'end_date' in dates:
+                    summary += f"• Date Range: {dates['start_date']} to {dates['end_date']}\n"
         
         elif message.message_type == MessageType.SCHEDULE_PROPOSAL:
             # Include meeting context if available
