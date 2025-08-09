@@ -99,7 +99,7 @@ class CalendarScheduler:
         
         Args:
             duration_description (str): Duration needed (e.g., "1 hour", "30 minutes", "2 hours")
-            when (str): When to search (e.g., "this week", "next week", "today")
+            when (str): When to search (e.g., "this week", "next week", "today", "August 18-24, 2025")
         
         Returns:
             list: Available time slots
@@ -107,12 +107,25 @@ class CalendarScheduler:
         print(f"Finding {duration_description} slots for {when}")
         
         duration_hours = self._parse_duration(duration_description)
-        search_days = self._parse_search_days(when)
+        search_info = self._parse_search_days(when)
         
-        free_slots = self.calendar.find_free_time(
-            duration_hours=duration_hours,
-            search_days=search_days
-        )
+        # Handle date range vs. relative days
+        if isinstance(search_info, dict) and search_info.get('type') == 'date_range':
+            # Use specific date range
+            start_date = search_info['start_date']
+            end_date = search_info['end_date']
+            
+            free_slots = self.calendar.find_free_time_in_range(
+                duration_hours=duration_hours,
+                start_date=start_date,
+                end_date=end_date
+            )
+        else:
+            # Use relative search from now
+            free_slots = self.calendar.find_free_time(
+                duration_hours=duration_hours,
+                search_days=search_info
+            )
         
         formatted_slots = []
         for slot in free_slots:
@@ -313,9 +326,48 @@ class CalendarScheduler:
         return 1.0  # Default 1 hour
     
     def _parse_search_days(self, when_description):
-        """Parse search period and return number of days."""
+        """Parse search period and return number of days or specific date range."""
+        import re
+        from dateutil import parser
+        
         when_lower = when_description.lower()
         
+        # Handle specific date ranges like "August 18-24, 2025" or "the week of August 18"
+        if re.search(r'\b\d{4}\b', when_description) or re.search(r'august|september|october|november|december|january|february|march|april|may|june|july', when_lower):
+            try:
+                # Pattern for "August 18-24, 2025" or "August 18-24"
+                date_range_match = re.search(r'(\w+)\s+(\d+)-(\d+),?\s*(\d{4})?', when_description)
+                if date_range_match:
+                    month_name, start_day, end_day, year = date_range_match.groups()
+                    year = int(year) if year else datetime.datetime.now().year
+                    
+                    # Parse start and end dates
+                    start_date_str = f"{month_name} {start_day}, {year}"
+                    end_date_str = f"{month_name} {end_day}, {year}"
+                    
+                    start_date = parser.parse(start_date_str).date()
+                    end_date = parser.parse(end_date_str).date()
+                    
+                    return {'type': 'date_range', 'start_date': start_date, 'end_date': end_date}
+                
+                # Pattern for "the week of August 18" 
+                week_match = re.search(r'week of (\w+ \d+),?\s*(\d{4})?', when_description)
+                if week_match:
+                    date_part, year = week_match.groups()
+                    year = int(year) if year else datetime.datetime.now().year
+                    
+                    # Parse the date and find the Monday of that week
+                    ref_date = parser.parse(f"{date_part}, {year}").date()
+                    monday = ref_date - datetime.timedelta(days=ref_date.weekday())
+                    sunday = monday + datetime.timedelta(days=6)
+                    
+                    return {'type': 'date_range', 'start_date': monday, 'end_date': sunday}
+                    
+            except Exception as e:
+                print(f"Error parsing date range '{when_description}': {e}")
+                # Fall through to relative date logic
+        
+        # Handle relative dates
         if "today" in when_lower:
             return 1
         elif "this week" in when_lower:

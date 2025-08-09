@@ -389,6 +389,119 @@ class CalendarManager:
             print(f"Error finding free time: {e}")
             return []
     
+    def find_free_time_in_range(self, duration_hours=1, start_date=None, end_date=None,
+                               start_hour=10, end_hour=19, calendar_id='primary'):
+        """
+        Find available time slots within a specific date range.
+        
+        Args:
+            duration_hours (float): Duration needed in hours
+            start_date (date): Start date for search
+            end_date (date): End date for search
+            start_hour (int): Earliest hour to consider (24-hour format)
+            end_hour (int): Latest hour to consider (24-hour format)
+            calendar_id (str): Calendar ID to check
+        
+        Returns:
+            list: List of available time slots
+        """
+        try:
+            if not start_date or not end_date:
+                raise ValueError("start_date and end_date are required")
+            
+            # Convert dates to datetime objects with timezone
+            search_start = self.timezone.localize(
+                datetime.datetime.combine(start_date, datetime.time(0, 0))
+            )
+            search_end = self.timezone.localize(
+                datetime.datetime.combine(end_date, datetime.time(23, 59))
+            )
+            
+            # Get all events in the search period
+            events = self.get_events(
+                time_min=search_start,
+                time_max=search_end,
+                max_results=100,
+                calendar_id=calendar_id
+            )
+            
+            free_slots = []
+            current_date = start_date
+            
+            while current_date <= end_date:
+                day_start = self.timezone.localize(
+                    datetime.datetime.combine(current_date, datetime.time(start_hour, 0))
+                )
+                day_end = self.timezone.localize(
+                    datetime.datetime.combine(current_date, datetime.time(end_hour, 0))
+                )
+                
+                # Find busy periods for this day
+                busy_periods = []
+                for event in events:
+                    event_start_str = event['start'].get('dateTime', event['start'].get('date'))
+                    event_end_str = event['end'].get('dateTime', event['end'].get('date'))
+                    
+                    if event_start_str and event_end_str:
+                        try:
+                            event_start = parser.parse(event_start_str)
+                            event_end = parser.parse(event_end_str)
+                            
+                            # Convert to timezone if needed
+                            if event_start.tzinfo is None:
+                                event_start = self.timezone.localize(event_start)
+                            elif event_start.tzinfo != self.timezone:
+                                event_start = event_start.astimezone(self.timezone)
+                                
+                            if event_end.tzinfo is None:
+                                event_end = self.timezone.localize(event_end)
+                            elif event_end.tzinfo != self.timezone:
+                                event_end = event_end.astimezone(self.timezone)
+                            
+                            # Check if event overlaps with this day
+                            if (event_start.date() == current_date or 
+                                event_end.date() == current_date or
+                                (event_start.date() < current_date < event_end.date())):
+                                busy_periods.append((event_start, event_end))
+                        except Exception as e:
+                            continue  # Skip problematic events
+                
+                # Sort busy periods
+                busy_periods.sort(key=lambda x: x[0])
+                
+                # Find free slots for this day
+                slot_start = day_start
+                for busy_start, busy_end in busy_periods:
+                    # Check if there's a free slot before this busy period
+                    slot_end = slot_start + datetime.timedelta(hours=duration_hours)
+                    if slot_end <= busy_start and slot_end <= day_end:
+                        free_slots.append({
+                            'start': slot_start,
+                            'end': slot_end,
+                            'duration': duration_hours
+                        })
+                        slot_start = slot_start + datetime.timedelta(hours=1)  # Move to next hour
+                    
+                    slot_start = max(slot_start, busy_end)
+                
+                # Fill remaining slots until end of day
+                while slot_start + datetime.timedelta(hours=duration_hours) <= day_end:
+                    slot_end = slot_start + datetime.timedelta(hours=duration_hours)
+                    free_slots.append({
+                        'start': slot_start,
+                        'end': slot_end,
+                        'duration': duration_hours
+                    })
+                    slot_start = slot_start + datetime.timedelta(hours=1)  # Move to next hour
+                
+                current_date += datetime.timedelta(days=1)
+            
+            return free_slots
+        
+        except Exception as e:
+            print(f"Error finding free time in range: {e}")
+            return []
+    
     def format_event_summary(self, event):
         """
         Format an event for display.
