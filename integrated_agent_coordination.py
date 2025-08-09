@@ -3596,6 +3596,15 @@ class IntegratedCoordinationProtocol:
                 'time_preferences': ['morning', 'afternoon'],
                 'meeting_context': self._serialize_meeting_context(meeting_context)
             }
+
+            # BUG FIX: Inject preferred_dates from the proposal into the synthetic payload
+            if proposed_times:
+                proposal_start_date = min(slot.start_time for slot in proposed_times)
+                proposal_end_date = max(slot.end_time for slot in proposed_times)
+                request_payload['preferred_dates'] = {
+                    'start_date': proposal_start_date.isoformat(),
+                    'end_date': proposal_end_date.isoformat()
+                }
             
             # Find our available times using the synthetic context
             our_available_times = self._find_all_available_times(meeting_context, request_payload)
