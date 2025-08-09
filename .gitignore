@@ -179,3 +179,11 @@ ehthumbs_vista.db
 # Temporary files
 temp/
 tmp/processed_messages.json
+
+# Runtime state files (keep .example templates, ignore instances)
+active_conversations.json
+conversation_threading.json
+processed_messages.json
+
+# Process management files
+monitor.pid

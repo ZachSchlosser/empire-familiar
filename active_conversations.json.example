@@ -1,0 +1,37 @@
+{
+  "active_conversations": {
+    "example_conversation_id": [
+      {
+        "message_id": "coord_agent_1234567890_abcd1234",
+        "message_type": "schedule_request",
+        "from_agent": {
+          "agent_id": "example_claude_agent",
+          "user_name": "Example User",
+          "user_email": "user@example.com",
+          "agent_version": "2.0",
+          "capabilities": [
+            "calendar_access",
+            "scheduling_coordination",
+            "multi_agent_communication",
+            "email_coordination",
+            "context_awareness"
+          ],
+          "timezone": "America/New_York"
+        },
+        "to_agent": {
+          "agent_id": "target_claude_agent",
+          "user_name": "Target User", 
+          "user_email": "target@example.com"
+        },
+        "conversation_id": "example_conversation_id",
+        "timestamp": "2025-01-01T12:00:00+00:00",
+        "meeting_context": {
+          "subject": "Example Meeting",
+          "description": "This is an example meeting coordination request",
+          "duration_minutes": 60,
+          "preferences": {}
+        }
+      }
+    ]
+  }
+}

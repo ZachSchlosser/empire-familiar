@@ -1,0 +1,7 @@
+{
+  "processed_messages": {
+    "example_message_id_1": "2025-01-01T12:00:00+00:00",
+    "coord_agent_1234567890_abcd1234": "2025-01-01T12:00:00+00:00",
+    "example_gmail_message_id": "2025-01-01T12:00:00+00:00"
+  }
+}

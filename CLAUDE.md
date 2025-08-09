@@ -401,6 +401,98 @@ The full agent-to-agent coordination works as follows:
 4. **Negotiation continues** up to 4 rounds
 5. **Final confirmation** creates calendar events on both sides
 
+## Managing the Email Monitor
+
+The system now includes a robust monitoring manager that replaces unreliable `nohup` scripts with proper process management.
+
+### Monitor Manager Commands
+
+Use `monitoring_manager.py` to control the background email monitoring process:
+
+**Start monitoring:**
+```bash
+python3 monitoring_manager.py start --interval 2 --duration 0
+```
+
+**Stop monitoring:**
+```bash
+python3 monitoring_manager.py stop
+```
+
+**Check status:**
+```bash
+python3 monitoring_manager.py status
+```
+
+**Restart monitoring:**
+```bash
+python3 monitoring_manager.py restart --interval 1 --duration 120
+```
+
+**View logs:**
+```bash
+python3 monitoring_manager.py logs --lines 50
+tail -f monitor.log
+```
+
+### Parameters
+
+- `--interval N`: Check for emails every N minutes (default: 2)
+- `--duration N`: Run for N minutes, 0 for indefinite (default: 0)
+- `--lines N`: Show last N lines from log file (default: 20)
+
+### Process Management Features
+
+**✅ Robust Background Processing:**
+- Proper PID tracking and process verification
+- Automatic log file management
+- Detached sessions that survive terminal closure
+
+**✅ Health Monitoring:**
+- Process status verification with `psutil`
+- Automated restart capabilities for cron jobs
+- Exponential backoff on API errors
+
+**✅ Error Resilience:**
+- Transient errors don't crash the monitor
+- Automatic backoff and retry on failures
+- Comprehensive logging to `monitor.log`
+
+### Automated Health Checks
+
+For production deployment, add this to your `crontab` for automatic restart if the monitor crashes:
+
+```bash
+# Check every 5 minutes and restart if needed
+*/5 * * * * /usr/bin/python3 /path/to/empire-familiar/monitoring_manager.py ensure-running --interval 2 --duration 0 >> /path/to/empire-familiar/cron.log 2>&1
+```
+
+### Legacy Command Support
+
+The old direct monitor commands still work but are deprecated:
+
+```bash
+# Deprecated - use monitoring_manager.py instead
+python3 agent_email_monitor.py monitor 60
+python3 agent_email_monitor.py quick
+```
+
+### Troubleshooting
+
+**Monitor won't start:**
+- Check if another instance is running: `python3 monitoring_manager.py status`
+- Verify credentials: `python3 auth.py`
+- Check log file: `python3 monitoring_manager.py logs`
+
+**Monitor crashes frequently:**
+- Check `monitor.log` for API rate limiting
+- Verify network connectivity to Gmail/Calendar APIs
+- Consider increasing `--interval` to reduce API calls
+
+**PID file issues:**
+- Delete stale `monitor.pid` if process verification fails
+- Restart with: `python3 monitoring_manager.py restart`
+
 ## Development Commands
 
 ### Testing
