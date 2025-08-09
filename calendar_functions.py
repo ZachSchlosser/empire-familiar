@@ -308,7 +308,7 @@ class CalendarManager:
             return False
     
     def find_free_time(self, duration_hours=1, search_days=7, 
-                      start_hour=9, end_hour=17, calendar_id='primary'):
+                      start_hour=10, end_hour=19, calendar_id='primary'):
         """
         Find available time slots in the calendar.
         

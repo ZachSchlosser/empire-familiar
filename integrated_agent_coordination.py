@@ -2684,23 +2684,24 @@ class IntegratedCoordinationProtocol:
         slots = []
         
         # Generate comprehensive time slots based on preferences with 30-minute intervals
+        # IMPORTANT: Respect CLAUDE.md boundaries of 10 AM - 7 PM
         time_ranges = []
         if "morning" in time_preferences:
-            # Morning: 8 AM to 12 PM (8:00, 8:30, 9:00, 9:30, 10:00, 10:30, 11:00, 11:30)
-            time_ranges.extend([(8, 0), (8, 30), (9, 0), (9, 30), (10, 0), (10, 30), (11, 0), (11, 30)])
+            # Morning: 10 AM to 12 PM (10:00, 10:30, 11:00, 11:30) - respects 10 AM minimum
+            time_ranges.extend([(10, 0), (10, 30), (11, 0), (11, 30)])
         if "afternoon" in time_preferences:
             # Afternoon: 1 PM to 6 PM (13:00, 13:30, 14:00, 14:30, 15:00, 15:30, 16:00, 16:30, 17:00, 17:30)
             time_ranges.extend([(13, 0), (13, 30), (14, 0), (14, 30), (15, 0), (15, 30), (16, 0), (16, 30), (17, 0), (17, 30)])
         if "evening" in time_preferences:
-            # Evening: 6 PM to 8 PM (18:00, 18:30, 19:00, 19:30)
-            time_ranges.extend([(18, 0), (18, 30), (19, 0), (19, 30)])
+            # Evening: 6 PM to 7 PM (18:00, 18:30) - respects 7 PM maximum
+            time_ranges.extend([(18, 0), (18, 30)])
         
-        # If no specific preferences, use all time ranges (business hours)
+        # If no specific preferences, use all time ranges (10 AM - 7 PM business hours)
         if not time_ranges:
             time_ranges.extend([
-                # Full business day coverage
-                (9, 0), (9, 30), (10, 0), (10, 30), (11, 0), (11, 30),
-                (13, 0), (13, 30), (14, 0), (14, 30), (15, 0), (15, 30), (16, 0), (16, 30)
+                # Full business day coverage within CLAUDE.md boundaries
+                (10, 0), (10, 30), (11, 0), (11, 30),
+                (13, 0), (13, 30), (14, 0), (14, 30), (15, 0), (15, 30), (16, 0), (16, 30), (17, 0), (17, 30), (18, 0), (18, 30)
             ])
         
         for hour, minute in time_ranges:
