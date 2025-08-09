@@ -111,12 +111,18 @@ def start(interval: int, duration: int):
             log_file.write(f"{'='*50}\n")
             log_file.flush()
             
+            # Set up environment to ensure proper Python path
+            env = os.environ.copy()
+            env['PYTHONPATH'] = os.path.dirname(os.path.abspath(__file__))
+            
             # Launch the monitor as a detached background process
             process = subprocess.Popen(
                 command,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
-                start_new_session=True  # Detach from parent session
+                start_new_session=True,  # Detach from parent session
+                env=env,  # Pass environment variables
+                cwd=os.path.dirname(os.path.abspath(__file__))  # Set working directory
             )
         
         # Write PID to file
