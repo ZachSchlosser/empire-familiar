@@ -6,6 +6,8 @@ Email-agnostic coordination functions for easy use
 
 from typing import Dict, Any, List, Optional
 import logging
+import re
+from datetime import datetime, timedelta
 from integrated_agent_coordination import (
     initialize_integrated_coordination_system,
     coordinate_intelligent_meeting,
@@ -17,6 +19,117 @@ from agent_config import get_agent_config, setup_agent_for_user
 
 # Setup logging
 logger = logging.getLogger(__name__)
+
+def parse_natural_language_date_range(date_range: str) -> Optional[Dict[str, str]]:
+    """
+    Parse natural language date expressions into preferred_dates dictionary
+    
+    Args:
+        date_range: Natural language date expression like "the week of August 18", "next week", etc.
+        
+    Returns:
+        Dict with 'start_date' and 'end_date' keys in ISO format, or None if parsing fails
+    """
+    if not date_range or not isinstance(date_range, str):
+        return None
+    
+    date_range = date_range.lower().strip()
+    now = datetime.now()
+    
+    try:
+        # Pattern: "the week of [date]" or "week of [date]"
+        week_of_match = re.search(r'(?:the\s+)?week\s+of\s+(\w+\s+\d{1,2})', date_range)
+        if week_of_match:
+            date_str = week_of_match.group(1)
+            # Parse "august 18" type expressions
+            month_day_match = re.match(r'(\w+)\s+(\d{1,2})', date_str)
+            if month_day_match:
+                month_name = month_day_match.group(1)
+                day = int(month_day_match.group(2))
+                
+                # Map month names to numbers
+                months = {
+                    'january': 1, 'jan': 1, 'february': 2, 'feb': 2, 'march': 3, 'mar': 3,
+                    'april': 4, 'apr': 4, 'may': 5, 'june': 6, 'jun': 6,
+                    'july': 7, 'jul': 7, 'august': 8, 'aug': 8, 'september': 9, 'sep': 9,
+                    'october': 10, 'oct': 10, 'november': 11, 'nov': 11, 'december': 12, 'dec': 12
+                }
+                
+                if month_name in months:
+                    # Use current year, or next year if the date has passed
+                    year = now.year
+                    target_date = datetime(year, months[month_name], day)
+                    if target_date < now:
+                        target_date = datetime(year + 1, months[month_name], day)
+                    
+                    # Find the Monday of that week
+                    days_to_monday = target_date.weekday()  # 0=Monday, 6=Sunday
+                    start_of_week = target_date - timedelta(days=days_to_monday)
+                    end_of_week = start_of_week + timedelta(days=6)  # Sunday
+                    
+                    logger.info(f"Parsed '{date_range}' as week from {start_of_week.date()} to {end_of_week.date()}")
+                    
+                    return {
+                        'start_date': start_of_week.strftime('%Y-%m-%d'),
+                        'end_date': end_of_week.strftime('%Y-%m-%d')
+                    }
+        
+        # Pattern: "next week"
+        if 'next week' in date_range:
+            # Find next Monday
+            days_until_next_monday = 7 - now.weekday()
+            if days_until_next_monday == 7:  # If today is Sunday
+                days_until_next_monday = 1
+            next_monday = now + timedelta(days=days_until_next_monday)
+            next_sunday = next_monday + timedelta(days=6)
+            
+            logger.info(f"Parsed '{date_range}' as next week from {next_monday.date()} to {next_sunday.date()}")
+            
+            return {
+                'start_date': next_monday.strftime('%Y-%m-%d'),
+                'end_date': next_sunday.strftime('%Y-%m-%d')
+            }
+        
+        # Pattern: "this week"
+        if 'this week' in date_range:
+            # Find this Monday
+            days_since_monday = now.weekday()  # 0=Monday, 6=Sunday
+            this_monday = now - timedelta(days=days_since_monday)
+            this_sunday = this_monday + timedelta(days=6)
+            
+            logger.info(f"Parsed '{date_range}' as this week from {this_monday.date()} to {this_sunday.date()}")
+            
+            return {
+                'start_date': this_monday.strftime('%Y-%m-%d'),
+                'end_date': this_sunday.strftime('%Y-%m-%d')
+            }
+        
+        # Pattern: "tomorrow"
+        if 'tomorrow' in date_range:
+            tomorrow = now + timedelta(days=1)
+            logger.info(f"Parsed '{date_range}' as tomorrow: {tomorrow.date()}")
+            
+            return {
+                'start_date': tomorrow.strftime('%Y-%m-%d'),
+                'end_date': tomorrow.strftime('%Y-%m-%d')
+            }
+        
+        # Pattern: "today"
+        if 'today' in date_range:
+            logger.info(f"Parsed '{date_range}' as today: {now.date()}")
+            
+            return {
+                'start_date': now.strftime('%Y-%m-%d'),
+                'end_date': now.strftime('%Y-%m-%d')
+            }
+        
+        # If we can't parse it, log and return None
+        logger.warning(f"Could not parse date range: '{date_range}'. Supported formats: 'the week of August 18', 'next week', 'this week', 'tomorrow', 'today'")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error parsing date range '{date_range}': {e}")
+        return None
 
 # Global coordination system with config
 _current_config = None
@@ -84,15 +197,14 @@ def schedule_meeting_with_agent(target_email: str, meeting_subject: str,
         else:
             enhanced_description = f"Requested timeframe: {date_range}"
     
-    # Prepare preferred dates if date_range is provided
-    # This is where the Claude agent should parse natural language dates
+    # Parse natural language date range into structured preferred_dates
     preferred_dates = None
     if date_range:
-        # For now, add a note that the Claude agent should parse this
-        # In a real implementation, the Claude agent would parse "the week of August 11"
-        # into specific start_date and end_date values before calling this function
-        logger.info(f"Note: Natural language date range '{date_range}' should be parsed by Claude agent")
-        logger.info("Claude should convert this to preferred_dates dict with 'start_date' and 'end_date' keys")
+        preferred_dates = parse_natural_language_date_range(date_range)
+        if preferred_dates:
+            logger.info(f"Successfully parsed date range '{date_range}' into preferred_dates: {preferred_dates}")
+        else:
+            logger.warning(f"Failed to parse date range '{date_range}', proceeding without date constraints")
     
     success = coordinate_intelligent_meeting(
         target_agent_email=target_email,
