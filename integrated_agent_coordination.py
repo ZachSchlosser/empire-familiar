@@ -610,6 +610,15 @@ Protocol: {self.PROTOCOL_VERSION}
             if 'proposal_confidence' in message.payload:
                 structured_lines.append(f"Proposal Confidence: {message.payload['proposal_confidence']}")
                 
+            if 'meeting_context' in message.payload:
+                try:
+                    meeting_context = message.payload['meeting_context']
+                    json_data = json.dumps(meeting_context, cls=CoordinationJSONEncoder)
+                    structured_lines.append("Meeting Context: " + json_data)
+                except Exception as e:
+                    logger.error(f"Error serializing meeting_context in SCHEDULE_PROPOSAL: {e}")
+                    structured_lines.append(f"Meeting Context: [SERIALIZATION_ERROR: {str(e)}]")
+                
         elif message.message_type == MessageType.SCHEDULE_REQUEST:
             if 'meeting_context' in message.payload:
                 meeting_context = message.payload['meeting_context']
@@ -626,9 +635,27 @@ Protocol: {self.PROTOCOL_VERSION}
                 selected_time = message.payload['selected_time']
                 structured_lines.append("Selected Time: " + json.dumps(selected_time, cls=CoordinationJSONEncoder))
                 
+            if 'meeting_context' in message.payload:
+                try:
+                    meeting_context = message.payload['meeting_context']
+                    json_data = json.dumps(meeting_context, cls=CoordinationJSONEncoder)
+                    structured_lines.append("Meeting Context: " + json_data)
+                except Exception as e:
+                    logger.error(f"Error serializing meeting_context in SCHEDULE_CONFIRMATION: {e}")
+                    structured_lines.append(f"Meeting Context: [SERIALIZATION_ERROR: {str(e)}]")
+                
         elif message.message_type == MessageType.SCHEDULE_REJECTION:
             if 'rejection_reason' in message.payload:
                 structured_lines.append(f"Rejection Reason: {message.payload['rejection_reason']}")
+                
+            if 'meeting_context' in message.payload:
+                try:
+                    meeting_context = message.payload['meeting_context']
+                    json_data = json.dumps(meeting_context, cls=CoordinationJSONEncoder)
+                    structured_lines.append("Meeting Context: " + json_data)
+                except Exception as e:
+                    logger.error(f"Error serializing meeting_context in SCHEDULE_REJECTION: {e}")
+                    structured_lines.append(f"Meeting Context: [SERIALIZATION_ERROR: {str(e)}]")
                 
         elif message.message_type == MessageType.SCHEDULE_COUNTER_PROPOSAL:
             # Handle counter proposals with proposed times
@@ -2134,13 +2161,32 @@ class IntegratedCoordinationProtocol:
                 return self._create_rejection_message(message, "Unable to parse any valid time options from your proposal")
             
             # Extract meeting context using the same pattern as _handle_schedule_request
+            meeting_context_dict = None
             if "meeting_context" not in message.payload:
-                logger.warning("❌ No meeting context found in proposal - handling as reverse-initiated proposal")
-                return self._handle_reverse_proposal(message, proposed_times)
+                logger.warning("❌ No meeting context found in proposal - attempting recovery from conversation history")
+                # Fall back to finding it in the conversation history
+                conversation = self.active_conversations.get(message.conversation_id, [])
+                for msg in conversation:
+                    if msg.message_type == MessageType.SCHEDULE_REQUEST:
+                        meeting_context_dict = msg.payload.get("meeting_context", {})
+                        logger.info(f"📋 Recovered meeting context from original request: subject='{meeting_context_dict.get('subject', 'Unknown')}'")
+                        break
+                
+                # If still no context found, create minimal context
+                if not meeting_context_dict:
+                    logger.warning("❌ Unable to recover meeting context from conversation history - creating minimal context")
+                    meeting_context_dict = {
+                        'subject': 'Meeting',
+                        'meeting_type': 'coordination_meeting',
+                        'duration_minutes': 30,
+                        'attendees': [message.from_agent.user_email, self.agent_identity.user_email]
+                    }
+            else:
+                meeting_context_dict = message.payload["meeting_context"]
+                logger.info("✅ Found meeting context in proposal message")
             
-            logger.info("✅ Extracting meeting context directly from proposal message")
             # Parse meeting context with proper enum handling - same as _handle_schedule_request
-            context_data = message.payload["meeting_context"].copy()
+            context_data = meeting_context_dict.copy()
             
             # Filter context_data to only include valid MeetingContext fields
             valid_fields = {'meeting_type', 'duration_minutes', 'attendees', 'subject', 'description', 'energy_requirement', 'requires_preparation'}
