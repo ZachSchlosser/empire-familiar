@@ -2461,7 +2461,7 @@ class IntegratedCoordinationProtocol:
                     timestamp=now_tz(),
                     conversation_id=message.conversation_id,
                     payload=payload,
-                    requires_response=False
+                    requires_response=True
                 )
             else:
                 # Generate new counter-proposals based on our calendar
@@ -4030,12 +4030,7 @@ class IntegratedCoordinationProtocol:
             'original_message_id': original_message.message_id,
             'proposed_times': serialized_times,
             'proposal_confidence': max(slot.confidence_score for slot in proposed_times),
-            'meeting_context': {
-                'subject': meeting_context.subject,
-                'duration_minutes': meeting_context.duration_minutes,
-                'attendees': meeting_context.attendees,
-                'description': meeting_context.description
-            },
+            'meeting_context': self._serialize_meeting_context(meeting_context),
             'sender_constraints': self._get_current_constraints(),
             'context_analysis': self._analyze_scheduling_context(meeting_context),
             'counter_proposal_reason': 'Found better mutual times based on both calendars'
@@ -4044,6 +4039,30 @@ class IntegratedCoordinationProtocol:
         return CoordinationMessage(
             message_id="",
             message_type=MessageType.SCHEDULE_COUNTER_PROPOSAL,
+            from_agent=self.agent_identity,
+            to_agent_email=original_message.from_agent.user_email,
+            timestamp=now_tz(),
+            conversation_id=original_message.conversation_id,
+            payload=payload,
+            requires_response=True
+        )
+    
+    def _create_confirmation_message(self, original_message: CoordinationMessage, 
+                                   confirmed_time: TimeSlot, 
+                                   meeting_context: MeetingContext) -> CoordinationMessage:
+        """Create a confirmation message when a meeting time is directly confirmed"""
+        
+        payload = {
+            'proposal_message_id': original_message.message_id,
+            'selected_time': self._serialize_timeslot(confirmed_time),
+            'confidence_score': confirmed_time.confidence_score,
+            'calendar_event_created': True,
+            'meeting_context': self._serialize_meeting_context(meeting_context)
+        }
+        
+        return CoordinationMessage(
+            message_id="",
+            message_type=MessageType.SCHEDULE_CONFIRMATION,
             from_agent=self.agent_identity,
             to_agent_email=original_message.from_agent.user_email,
             timestamp=now_tz(),
