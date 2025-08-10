@@ -2201,7 +2201,7 @@ class IntegratedCoordinationProtocol:
                     timestamp=now_tz(),
                     conversation_id=message.conversation_id,
                     payload=payload,
-                    requires_response=False
+                    requires_response=True
                 )
             
             else:
@@ -2227,7 +2227,7 @@ class IntegratedCoordinationProtocol:
                     timestamp=now_tz(),
                     conversation_id=message.conversation_id,
                     payload=payload,
-                    requires_response=False
+                    requires_response=True
                 )
                 
         except Exception as e:
