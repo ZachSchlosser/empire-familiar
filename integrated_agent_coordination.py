@@ -2133,19 +2133,18 @@ class IntegratedCoordinationProtocol:
                 logger.error("No valid time slots could be parsed from proposal")
                 return self._create_rejection_message(message, "Unable to parse any valid time options from your proposal")
             
-            # Extract meeting context from conversation history since SCHEDULE_PROPOSAL messages 
-            # don't contain meeting_context in their payload - they respond to SCHEDULE_REQUEST messages
-            logger.info("✅ Extracting meeting context from conversation history")
-            conversation = self.active_conversations.get(message.conversation_id, [])
-            meeting_context_dict = self._extract_meeting_context_from_conversation(conversation, message)
-            
-            if not meeting_context_dict:
-                logger.warning("❌ No meeting context found in conversation history - handling as reverse-initiated proposal")
+            # Extract meeting context using the same pattern as _handle_schedule_request
+            if "meeting_context" not in message.payload:
+                logger.warning("❌ No meeting context found in proposal - handling as reverse-initiated proposal")
                 return self._handle_reverse_proposal(message, proposed_times)
+            
+            logger.info("✅ Extracting meeting context directly from proposal message")
+            # Parse meeting context with proper enum handling - same as _handle_schedule_request
+            context_data = message.payload["meeting_context"].copy()
             
             # Filter context_data to only include valid MeetingContext fields
             valid_fields = {'meeting_type', 'duration_minutes', 'attendees', 'subject', 'description', 'energy_requirement', 'requires_preparation'}
-            filtered_context = {k: v for k, v in meeting_context_dict.items() if k in valid_fields}
+            filtered_context = {k: v for k, v in context_data.items() if k in valid_fields}
             
             # Set defaults for required fields if missing
             if 'attendees' not in filtered_context:
