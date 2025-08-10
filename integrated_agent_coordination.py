@@ -2133,13 +2133,25 @@ class IntegratedCoordinationProtocol:
                 logger.error("No valid time slots could be parsed from proposal")
                 return self._create_rejection_message(message, "Unable to parse any valid time options from your proposal")
             
-            # Extract meeting context directly from the incoming message payload (stateless approach)
+            # Extract meeting context using the same pattern as _handle_schedule_request
             if "meeting_context" not in message.payload:
                 logger.warning("❌ No meeting context found in proposal - handling as reverse-initiated proposal")
                 return self._handle_reverse_proposal(message, proposed_times)
             
             logger.info("✅ Extracting meeting context directly from proposal message")
-            complete_context = self._ensure_meeting_context_complete(message.payload["meeting_context"], "coordination_meeting")
+            # Parse meeting context with proper enum handling - same as _handle_schedule_request
+            context_data = message.payload["meeting_context"].copy()
+            
+            # Filter context_data to only include valid MeetingContext fields
+            valid_fields = {'meeting_type', 'duration_minutes', 'attendees', 'subject', 'description', 'energy_requirement', 'requires_preparation'}
+            filtered_context = {k: v for k, v in context_data.items() if k in valid_fields}
+            
+            # Set defaults for required fields if missing
+            if 'attendees' not in filtered_context:
+                filtered_context['attendees'] = [message.from_agent.user_email, self.agent_identity.user_email]
+            
+            logger.info(f"Creating MeetingContext with fields: {list(filtered_context.keys())}")
+            complete_context = self._ensure_meeting_context_complete(filtered_context, "coordination_meeting")
             meeting_context = MeetingContext(**complete_context)
             
             logger.info(f"📋 Using meeting context from proposal: subject='{meeting_context.subject}'")
@@ -2251,13 +2263,25 @@ class IntegratedCoordinationProtocol:
                 return None
             logger.info(f"Confirmed meeting time: {confirmed_time.start_time} - {confirmed_time.end_time}")
             
-            # Extract meeting context directly from the incoming message payload (stateless approach)
+            # Extract meeting context using the same pattern as _handle_schedule_request
             if "meeting_context" not in message.payload:
                 logger.error("❌ No meeting context found in confirmation")
                 return None
             
             logger.info("✅ Extracting meeting context directly from confirmation message")
-            complete_context = self._ensure_meeting_context_complete(message.payload["meeting_context"], "confirmation")
+            # Parse meeting context with proper enum handling - same as _handle_schedule_request
+            context_data = message.payload["meeting_context"].copy()
+            
+            # Filter context_data to only include valid MeetingContext fields
+            valid_fields = {'meeting_type', 'duration_minutes', 'attendees', 'subject', 'description', 'energy_requirement', 'requires_preparation'}
+            filtered_context = {k: v for k, v in context_data.items() if k in valid_fields}
+            
+            # Set defaults for required fields if missing
+            if 'attendees' not in filtered_context:
+                filtered_context['attendees'] = [message.from_agent.user_email, self.agent_identity.user_email]
+            
+            logger.info(f"Creating MeetingContext with fields: {list(filtered_context.keys())}")
+            complete_context = self._ensure_meeting_context_complete(filtered_context, "confirmation")
             meeting_context = MeetingContext(**complete_context)
             logger.info(f"📋 Using meeting context from confirmation: subject='{meeting_context.subject}'")
             
@@ -2395,13 +2419,25 @@ class IntegratedCoordinationProtocol:
             # Remove hardcoded negotiation limit - let natural termination handle it
             # The system will naturally terminate when no more alternatives can be found
             
-            # Extract meeting context directly from the incoming message payload (stateless approach)
+            # Extract meeting context using the same pattern as _handle_schedule_request
             if "meeting_context" not in message.payload:
                 logger.error("❌ No meeting context found in counter-proposal")
                 return self._create_rejection_message(message, "Invalid counter-proposal format - missing meeting context")
             
             logger.info("✅ Extracting meeting context directly from counter-proposal message")
-            complete_context = self._ensure_meeting_context_complete(message.payload["meeting_context"], "counter_proposal")
+            # Parse meeting context with proper enum handling - same as _handle_schedule_request
+            context_data = message.payload["meeting_context"].copy()
+            
+            # Filter context_data to only include valid MeetingContext fields
+            valid_fields = {'meeting_type', 'duration_minutes', 'attendees', 'subject', 'description', 'energy_requirement', 'requires_preparation'}
+            filtered_context = {k: v for k, v in context_data.items() if k in valid_fields}
+            
+            # Set defaults for required fields if missing
+            if 'attendees' not in filtered_context:
+                filtered_context['attendees'] = [message.from_agent.user_email, self.agent_identity.user_email]
+            
+            logger.info(f"Creating MeetingContext with fields: {list(filtered_context.keys())}")
+            complete_context = self._ensure_meeting_context_complete(filtered_context, "counter_proposal")
             meeting_context = MeetingContext(**complete_context)
             logger.info(f"📋 Using meeting context from counter-proposal: subject='{meeting_context.subject}'")
             
@@ -3556,16 +3592,36 @@ class IntegratedCoordinationProtocol:
         logger.info(f"Handling reverse proposal from {message.from_agent.agent_id} with {len(proposed_times)} time slots")
         
         try:
-            # Extract meeting context from conversation using improved helper
-            conversation = self.active_conversations.get(message.conversation_id, [])
-            meeting_context_dict = self._extract_meeting_context_from_conversation(conversation, message)
+            # First try to extract context from current message using standard pattern
+            meeting_context_dict = None
+            if message.payload and 'meeting_context' in message.payload:
+                logger.info("✅ Found meeting_context in reverse proposal message")
+                # Use the same pattern as other handlers
+                context_data = message.payload["meeting_context"].copy()
+                
+                # Filter context_data to only include valid MeetingContext fields
+                valid_fields = {'meeting_type', 'duration_minutes', 'attendees', 'subject', 'description', 'energy_requirement', 'requires_preparation'}
+                filtered_context = {k: v for k, v in context_data.items() if k in valid_fields}
+                
+                # Set defaults for required fields if missing
+                if 'attendees' not in filtered_context:
+                    filtered_context['attendees'] = [message.from_agent.user_email, self.agent_identity.user_email]
+                
+                meeting_context_dict = filtered_context
+            
+            # If not in current message, try conversation history
+            if not meeting_context_dict:
+                logger.info("Searching conversation history for meeting context")
+                conversation = self.active_conversations.get(message.conversation_id, [])
+                meeting_context_dict = self._extract_meeting_context_from_conversation(conversation, message)
             
             if meeting_context_dict:
+                logger.info(f"Creating MeetingContext with fields: {list(meeting_context_dict.keys())}")
                 complete_context = self._ensure_meeting_context_complete(meeting_context_dict, "reverse_coordination")
                 meeting_context = MeetingContext(**complete_context)
-                logger.info(f"📋 Using meeting context from conversation: subject='{meeting_context.subject}'")
+                logger.info(f"📋 Using meeting context from reverse proposal: subject='{meeting_context.subject}'")
             else:
-                # Fallback: Extract basic info from message if no context found in conversation
+                # Fallback: Extract basic info from message if no context found anywhere
                 logger.warning("⚠️ No meeting context found in message or conversation - creating fallback context")
                 
                 attendees = [self.agent_identity.user_email, message.from_agent.user_email]
