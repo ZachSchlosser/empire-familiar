@@ -958,6 +958,22 @@ Protocol: {self.PROTOCOL_VERSION}
                             payload['proposal_confidence'] = float(confidence_value)
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Invalid proposal confidence value: {e}")
+                
+                # Extract Meeting Context for SCHEDULE_PROPOSAL (matching SCHEDULE_REQUEST pattern)
+                if 'Meeting Context' in tech_data:
+                    try:
+                        meeting_context_json = tech_data['Meeting Context']
+                        if meeting_context_json and meeting_context_json.strip():
+                            meeting_context = json.loads(meeting_context_json)
+                            if isinstance(meeting_context, dict):
+                                payload['meeting_context'] = meeting_context
+                                logger.info("✅ Extracted meeting_context from SCHEDULE_PROPOSAL")
+                            else:
+                                logger.warning("Meeting context JSON in SCHEDULE_PROPOSAL is not a valid object")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse meeting context JSON in SCHEDULE_PROPOSAL: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing meeting context in SCHEDULE_PROPOSAL: {e}")
                         
             elif message_type == 'schedule_request':
                 if 'Meeting Context' in tech_data:
@@ -1020,12 +1036,44 @@ Protocol: {self.PROTOCOL_VERSION}
                         logger.warning(f"Failed to parse selected time JSON: {e}")
                     except Exception as e:
                         logger.error(f"Error processing selected time: {e}")
+                
+                # Extract Meeting Context for SCHEDULE_CONFIRMATION (matching SCHEDULE_REQUEST pattern)
+                if 'Meeting Context' in tech_data:
+                    try:
+                        meeting_context_json = tech_data['Meeting Context']
+                        if meeting_context_json and meeting_context_json.strip():
+                            meeting_context = json.loads(meeting_context_json)
+                            if isinstance(meeting_context, dict):
+                                payload['meeting_context'] = meeting_context
+                                logger.info("✅ Extracted meeting_context from SCHEDULE_CONFIRMATION")
+                            else:
+                                logger.warning("Meeting context JSON in SCHEDULE_CONFIRMATION is not a valid object")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse meeting context JSON in SCHEDULE_CONFIRMATION: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing meeting context in SCHEDULE_CONFIRMATION: {e}")
                         
             elif message_type == 'schedule_rejection':
                 if 'Rejection Reason' in tech_data:
                     reason = tech_data['Rejection Reason']
                     if reason and reason.strip():
                         payload['rejection_reason'] = reason.strip()
+                
+                # Extract Meeting Context for SCHEDULE_REJECTION (matching SCHEDULE_REQUEST pattern)
+                if 'Meeting Context' in tech_data:
+                    try:
+                        meeting_context_json = tech_data['Meeting Context']
+                        if meeting_context_json and meeting_context_json.strip():
+                            meeting_context = json.loads(meeting_context_json)
+                            if isinstance(meeting_context, dict):
+                                payload['meeting_context'] = meeting_context
+                                logger.info("✅ Extracted meeting_context from SCHEDULE_REJECTION")
+                            else:
+                                logger.warning("Meeting context JSON in SCHEDULE_REJECTION is not a valid object")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse meeting context JSON in SCHEDULE_REJECTION: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing meeting context in SCHEDULE_REJECTION: {e}")
                         
             elif message_type == 'schedule_counter_proposal':
                 # Extract structured proposed times data (same as schedule_proposal)
