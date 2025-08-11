@@ -729,6 +729,11 @@ Protocol: {self.PROTOCOL_VERSION}
             # Extract technical identifiers
             tech_data = {}
             lines = technical_section.split('\n')
+            
+            # Debug logging for technical section parsing
+            logger.debug(f"📋 Parsing technical section with {len(lines)} lines")
+            logger.debug(f"First 5 lines of technical section: {lines[:5] if len(lines) >= 5 else lines}")
+            
             i = 0
             while i < len(lines):
                 line = lines[i]
@@ -737,12 +742,29 @@ Protocol: {self.PROTOCOL_VERSION}
                     key = key.strip()
                     value = value.strip()
                     
+                    # Debug log each key found
+                    logger.debug(f"Found key: '{key}' with value starting: '{value[:50]}...' (length: {len(value)})")
+                    
                     # Check if this looks like JSON that might span multiple lines
-                    if value.startswith(('{', '[')) and key in ['Meeting Context', 'Time Preferences', 'Proposed Times Data', 'Selected Time']:
+                    # Make the check more robust by checking for common JSON-containing keys
+                    json_keys = ['Meeting Context', 'Time Preferences', 'Proposed Times Data', 'Selected Time', 'Preferred Dates']
+                    is_json_field = key in json_keys
+                    
+                    # Also check for partial matches in case of extra whitespace
+                    if not is_json_field:
+                        for json_key in json_keys:
+                            if json_key.lower() in key.lower():
+                                is_json_field = True
+                                logger.debug(f"📍 Partial match found: '{key}' matches '{json_key}'")
+                                break
+                    
+                    if value.startswith(('{', '[')) and is_json_field:
+                        logger.debug(f"🔍 Detected multi-line JSON for key: '{key}'")
                         # Collect lines until we have complete JSON
                         json_lines = [value]
                         brace_count = value.count('{') - value.count('}')
                         bracket_count = value.count('[') - value.count(']')
+                        initial_line_count = 1
                         
                         # Keep adding lines until braces/brackets are balanced
                         while (brace_count > 0 or bracket_count > 0) and i + 1 < len(lines):
@@ -751,13 +773,22 @@ Protocol: {self.PROTOCOL_VERSION}
                             json_lines.append(next_line)
                             brace_count += next_line.count('{') - next_line.count('}')
                             bracket_count += next_line.count('[') - next_line.count(']')
+                            initial_line_count += 1
                         
                         # Join the lines to form complete JSON, removing line breaks
                         # Replace newlines with spaces to create valid JSON
                         value = ' '.join(line.strip() for line in json_lines)
+                        logger.debug(f"✅ Assembled multi-line JSON for '{key}': {initial_line_count} lines -> {len(value)} chars")
                     
                     tech_data[key] = value
                 i += 1
+            
+            # Debug log final tech_data keys
+            logger.info(f"📊 Technical data extracted with keys: {list(tech_data.keys())}")
+            if 'Meeting Context' in tech_data:
+                logger.info(f"✅ 'Meeting Context' found in tech_data, length: {len(tech_data['Meeting Context'])}")
+            else:
+                logger.warning(f"❌ 'Meeting Context' NOT found in tech_data")
             
             # Extract payload from structured technical data first, fallback to human-readable content
             payload = self._extract_payload_from_technical_data(tech_data, tech_data.get('Message Type', ''))
@@ -917,7 +948,37 @@ Protocol: {self.PROTOCOL_VERSION}
             return payload
         
         try:
+            logger.debug(f"🔍 _extract_payload_from_technical_data called for message_type: '{message_type}'")
+            logger.debug(f"📊 Available tech_data keys: {list(tech_data.keys()) if tech_data else 'None'}")
+            
+            # ARCHITECTURAL IMPROVEMENT: Extract Meeting Context for ALL message types that contain it
+            # This ensures meeting context is never lost regardless of message type
+            if 'Meeting Context' in tech_data:
+                logger.info(f"✅ Found 'Meeting Context' key in tech_data for message_type: {message_type}")
+                try:
+                    meeting_context_json = tech_data['Meeting Context']
+                    logger.debug(f"📋 Meeting Context JSON string: '{meeting_context_json[:100]}...' (length: {len(meeting_context_json) if meeting_context_json else 0})")
+                    if meeting_context_json and meeting_context_json.strip():
+                        meeting_context = json.loads(meeting_context_json)
+                        if isinstance(meeting_context, dict):
+                            payload['meeting_context'] = meeting_context
+                            logger.info(f"✅ Successfully extracted meeting_context for {message_type} with keys: {list(meeting_context.keys())}")
+                            logger.info(f"📋 Meeting subject: '{meeting_context.get('subject', 'N/A')}'")
+                        else:
+                            logger.warning(f"Meeting context JSON is not a valid object for {message_type}, type: {type(meeting_context)}")
+                    else:
+                        logger.warning(f"Meeting Context JSON string is empty or None for {message_type}")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse meeting context JSON for {message_type}: {e}")
+                    logger.warning(f"Problematic JSON string: '{meeting_context_json}'")
+                except Exception as e:
+                    logger.error(f"Error processing meeting context for {message_type}: {e}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # Process message type specific fields
             if message_type == 'schedule_proposal':
+                logger.info(f"📧 Processing SCHEDULE_PROPOSAL technical data")
                 # Extract structured proposed times data
                 if 'Proposed Times Data' in tech_data:
                     try:
@@ -958,37 +1019,9 @@ Protocol: {self.PROTOCOL_VERSION}
                             payload['proposal_confidence'] = float(confidence_value)
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Invalid proposal confidence value: {e}")
-                
-                # Extract Meeting Context for SCHEDULE_PROPOSAL (matching SCHEDULE_REQUEST pattern)
-                if 'Meeting Context' in tech_data:
-                    try:
-                        meeting_context_json = tech_data['Meeting Context']
-                        if meeting_context_json and meeting_context_json.strip():
-                            meeting_context = json.loads(meeting_context_json)
-                            if isinstance(meeting_context, dict):
-                                payload['meeting_context'] = meeting_context
-                                logger.info("✅ Extracted meeting_context from SCHEDULE_PROPOSAL")
-                            else:
-                                logger.warning("Meeting context JSON in SCHEDULE_PROPOSAL is not a valid object")
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse meeting context JSON in SCHEDULE_PROPOSAL: {e}")
-                    except Exception as e:
-                        logger.error(f"Error processing meeting context in SCHEDULE_PROPOSAL: {e}")
                         
             elif message_type == 'schedule_request':
-                if 'Meeting Context' in tech_data:
-                    try:
-                        meeting_context_json = tech_data['Meeting Context']
-                        if meeting_context_json and meeting_context_json.strip():
-                            meeting_context = json.loads(meeting_context_json)
-                            if isinstance(meeting_context, dict):
-                                payload['meeting_context'] = meeting_context
-                            else:
-                                logger.warning("Meeting context JSON is not a valid object")
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse meeting context JSON: {e}")
-                    except Exception as e:
-                        logger.error(f"Error processing meeting context: {e}")
+                # Meeting Context already extracted above for all message types
                 
                 if 'Time Preferences' in tech_data:
                     try:
@@ -1037,21 +1070,7 @@ Protocol: {self.PROTOCOL_VERSION}
                     except Exception as e:
                         logger.error(f"Error processing selected time: {e}")
                 
-                # Extract Meeting Context for SCHEDULE_CONFIRMATION (matching SCHEDULE_REQUEST pattern)
-                if 'Meeting Context' in tech_data:
-                    try:
-                        meeting_context_json = tech_data['Meeting Context']
-                        if meeting_context_json and meeting_context_json.strip():
-                            meeting_context = json.loads(meeting_context_json)
-                            if isinstance(meeting_context, dict):
-                                payload['meeting_context'] = meeting_context
-                                logger.info("✅ Extracted meeting_context from SCHEDULE_CONFIRMATION")
-                            else:
-                                logger.warning("Meeting context JSON in SCHEDULE_CONFIRMATION is not a valid object")
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse meeting context JSON in SCHEDULE_CONFIRMATION: {e}")
-                    except Exception as e:
-                        logger.error(f"Error processing meeting context in SCHEDULE_CONFIRMATION: {e}")
+                # Meeting Context already extracted above for all message types
                         
             elif message_type == 'schedule_rejection':
                 if 'Rejection Reason' in tech_data:
@@ -1059,21 +1078,7 @@ Protocol: {self.PROTOCOL_VERSION}
                     if reason and reason.strip():
                         payload['rejection_reason'] = reason.strip()
                 
-                # Extract Meeting Context for SCHEDULE_REJECTION (matching SCHEDULE_REQUEST pattern)
-                if 'Meeting Context' in tech_data:
-                    try:
-                        meeting_context_json = tech_data['Meeting Context']
-                        if meeting_context_json and meeting_context_json.strip():
-                            meeting_context = json.loads(meeting_context_json)
-                            if isinstance(meeting_context, dict):
-                                payload['meeting_context'] = meeting_context
-                                logger.info("✅ Extracted meeting_context from SCHEDULE_REJECTION")
-                            else:
-                                logger.warning("Meeting context JSON in SCHEDULE_REJECTION is not a valid object")
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse meeting context JSON in SCHEDULE_REJECTION: {e}")
-                    except Exception as e:
-                        logger.error(f"Error processing meeting context in SCHEDULE_REJECTION: {e}")
+                # Meeting Context already extracted above for all message types
                         
             elif message_type == 'schedule_counter_proposal':
                 # Extract structured proposed times data (same as schedule_proposal)
