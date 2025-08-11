@@ -598,6 +598,9 @@ Protocol: {self.PROTOCOL_VERSION}
         
         # Add structured payload data based on message type
         if message.message_type == MessageType.SCHEDULE_PROPOSAL:
+            # Debug log the entire payload
+            logger.info(f"📊 SCHEDULE_PROPOSAL payload keys: {list(message.payload.keys())}")
+            
             if 'proposed_times' in message.payload:
                 # Include ALL proposed time slots in structured format
                 proposed_times = message.payload['proposed_times']
@@ -611,6 +614,7 @@ Protocol: {self.PROTOCOL_VERSION}
                 structured_lines.append(f"Proposal Confidence: {message.payload['proposal_confidence']}")
                 
             if 'meeting_context' in message.payload:
+                logger.info("✅ meeting_context found in SCHEDULE_PROPOSAL payload")
                 try:
                     meeting_context = message.payload['meeting_context']
                     json_data = json.dumps(meeting_context, cls=CoordinationJSONEncoder)
@@ -618,6 +622,9 @@ Protocol: {self.PROTOCOL_VERSION}
                 except Exception as e:
                     logger.error(f"Error serializing meeting_context in SCHEDULE_PROPOSAL: {e}")
                     structured_lines.append(f"Meeting Context: [SERIALIZATION_ERROR: {str(e)}]")
+            else:
+                logger.warning("❌ meeting_context NOT found in SCHEDULE_PROPOSAL payload!")
+                logger.warning(f"Available payload keys: {list(message.payload.keys())}")
                 
         elif message.message_type == MessageType.SCHEDULE_REQUEST:
             if 'meeting_context' in message.payload:
@@ -658,6 +665,9 @@ Protocol: {self.PROTOCOL_VERSION}
                     structured_lines.append(f"Meeting Context: [SERIALIZATION_ERROR: {str(e)}]")
                 
         elif message.message_type == MessageType.SCHEDULE_COUNTER_PROPOSAL:
+            # Debug log the entire payload
+            logger.info(f"📊 SCHEDULE_COUNTER_PROPOSAL payload keys: {list(message.payload.keys())}")
+            
             # Handle counter proposals with proposed times
             if 'proposed_times' in message.payload:
                 proposed_times = message.payload['proposed_times']
@@ -691,6 +701,7 @@ Protocol: {self.PROTOCOL_VERSION}
                     logger.error(f"Error adding counter_proposal_reason: {e}")
                 
             if 'meeting_context' in message.payload:
+                logger.info("✅ meeting_context found in SCHEDULE_COUNTER_PROPOSAL payload")
                 try:
                     meeting_context = message.payload['meeting_context']
                     json_data = json.dumps(meeting_context, cls=CoordinationJSONEncoder)
@@ -698,6 +709,9 @@ Protocol: {self.PROTOCOL_VERSION}
                 except Exception as e:
                     logger.error(f"Error serializing meeting_context: {e}")
                     structured_lines.append(f"Meeting Context: [SERIALIZATION_ERROR: {str(e)}]")
+            else:
+                logger.warning("❌ meeting_context NOT found in SCHEDULE_COUNTER_PROPOSAL payload!")
+                logger.warning(f"Available payload keys: {list(message.payload.keys())}")
         
         # Return formatted structured data section
         if structured_lines:
@@ -2138,6 +2152,8 @@ class IntegratedCoordinationProtocol:
                 }
                 
                 logger.info(f"📋 Including meeting context in SCHEDULE_PROPOSAL: subject='{meeting_context.subject}'")
+                logger.info(f"📊 SCHEDULE_PROPOSAL payload being created with keys: {list(payload.keys())}")
+                logger.info(f"✅ meeting_context in payload: {'meeting_context' in payload}")
                 logger.debug(f"Meeting context details: {self._serialize_meeting_context(meeting_context)}")
                 
                 return CoordinationMessage(
