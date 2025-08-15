@@ -26,7 +26,7 @@ logging.getLogger('googleapiclient.discovery_cache').setLevel(logging.WARNING)  
 class AgentEmailMonitor:
     """Real-time monitor for agent email communications"""
     
-    def __init__(self, check_interval_minutes=2):
+    def __init__(self, check_interval_minutes=0.5):
         """
         Initialize the email monitor.
         
@@ -178,7 +178,7 @@ class AgentEmailMonitor:
         logging.info("🔍 Running single coordination message check...")
         self._check_and_respond_job()
 
-def start_agent_coordination_monitoring(duration_minutes=60, check_interval=2):
+def start_agent_coordination_monitoring(duration_minutes=60, check_interval=0.5):
     """
     Start monitoring agent coordination messages.
     
@@ -209,7 +209,8 @@ if __name__ == "__main__":
         elif sys.argv[1] == "monitor":
             # Continuous monitoring
             duration = int(sys.argv[2]) if len(sys.argv) > 2 else 30
-            start_agent_coordination_monitoring(duration_minutes=duration)
+            check_interval = float(sys.argv[3]) if len(sys.argv) > 3 else 0.5
+            start_agent_coordination_monitoring(duration_minutes=duration, check_interval=check_interval)
     else:
-        # Default: 30 minute monitoring session
-        start_agent_coordination_monitoring(duration_minutes=30)
+        # Default: 30 minute monitoring session with 30-second checks
+        start_agent_coordination_monitoring(duration_minutes=30, check_interval=0.5)
