@@ -277,9 +277,9 @@ Examples:
     
     parser.add_argument(
         '--interval',
-        type=int,
-        default=2,
-        help='Check interval in minutes (default: 2)'
+        type=float,
+        default=0.5,
+        help='Check interval in minutes (default: 0.5, which is 30 seconds)'
     )
     
     parser.add_argument(
