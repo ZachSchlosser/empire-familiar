@@ -44,6 +44,7 @@ class CalendarScheduler:
         duration = self._extract_duration(description)
         location = self._extract_location(description)
         attendees = self._extract_attendees(description)
+        recurrence = self.calendar.parse_recurrence_rule(description)
         
         if start_time is None:
             print("Could not determine start time from description")
@@ -52,14 +53,20 @@ class CalendarScheduler:
         # Calculate end time
         end_time = start_time + datetime.timedelta(hours=duration)
         
-        print(f"Creating event: '{title}' from {start_time} to {end_time}")
+        if recurrence:
+            print(f"Creating recurring event: '{title}' from {start_time} to {end_time}")
+            print(f"Recurrence rule: {recurrence}")
+        else:
+            print(f"Creating event: '{title}' from {start_time} to {end_time}")
         
         return self.calendar.create_event(
             title=title,
             start_time=start_time,
             end_time=end_time,
             location=location,
-            attendees=attendees
+            attendees=attendees,
+            recurrence=recurrence,
+            enforce_boundaries=True  # Enforce 10am-7pm boundaries by default
         )
     
     def get_schedule(self, time_description="today"):

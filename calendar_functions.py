@@ -89,18 +89,73 @@ class CalendarManager:
                 parsed = parser.parse(date_str, default=now)
                 return self.timezone.localize(parsed) if parsed.tzinfo is None else parsed
             
-            # Extract time from the string or use default
+            # Extract time from the string with improved AM/PM handling
             time_str = default_time or '09:00'
-            for word in date_str.split():
-                if ':' in word or ('am' in word.lower()) or ('pm' in word.lower()):
-                    time_str = word
-                    break
             
-            # Combine date and time
-            if default_time and not any(t in date_str.lower() for t in ['am', 'pm', ':']):
+            # Look for time patterns in the string
+            import re
+            
+            # Time patterns - order matters! More specific patterns first
+            time_patterns = [
+                r'\b(\d{1,2}):(\d{2})\s*(AM|PM)\b',   # "8:30 AM", "10:15 PM" - must come first!
+                r'\b(\d{1,2})\s*(AM|PM)\b',           # "8 AM", "10 PM"
+                r'\b(\d{1,2}):(\d{2})\b',             # "14:30", "08:00"
+                r'\b(\d{1,2})\s*o\'?clock\b'          # "8 o'clock", "10 oclock"
+            ]
+            
+            time_found = False
+            for pattern in time_patterns:
+                match = re.search(pattern, date_str, re.IGNORECASE)
+                if match:
+                    groups = match.groups()
+                    
+                    if 'AM' in match.group().upper() or 'PM' in match.group().upper():
+                        # Handle AM/PM format
+                        hour = int(groups[0])
+                        # Handle minutes - check if we have a minutes group that's numeric
+                        minute = 0
+                        if len(groups) >= 3:
+                            # For pattern like "8:30 AM" -> groups = ('8', '30', 'AM')
+                            if groups[1] and groups[1].isdigit():
+                                minute = int(groups[1])
+                        am_pm = groups[-1].upper()
+                        
+                        # Convert to 24-hour format
+                        if am_pm == 'PM' and hour != 12:
+                            hour += 12
+                        elif am_pm == 'AM' and hour == 12:
+                            hour = 0
+                            
+                        time_str = f"{hour:02d}:{minute:02d}"
+                        time_found = True
+                        break
+                    elif ':' in match.group():
+                        # Handle 24-hour format
+                        time_str = match.group()
+                        time_found = True
+                        break
+                    elif 'o\'clock' in match.group().lower() or 'oclock' in match.group().lower():
+                        # Handle "o'clock" format
+                        hour = int(groups[0])
+                        time_str = f"{hour:02d}:00"
+                        time_found = True
+                        break
+            
+            # Fallback to default if no time found and default provided
+            if not time_found and default_time and not any(t in date_str.lower() for t in ['am', 'pm', ':']):
                 time_str = default_time
             
-            time_obj = parser.parse(time_str).time()
+            # Parse the time string
+            try:
+                time_obj = parser.parse(time_str).time()
+            except:
+                # If parsing fails, try manual parsing
+                if ':' in time_str:
+                    hour, minute = map(int, time_str.split(':'))
+                    time_obj = datetime.time(hour, minute)
+                else:
+                    time_obj = datetime.time(9, 0)  # Default fallback
+            
             dt = datetime.datetime.combine(base_date, time_obj)
             
             return self.timezone.localize(dt)
@@ -111,7 +166,8 @@ class CalendarManager:
             return datetime.datetime.now(self.timezone) + datetime.timedelta(hours=1)
     
     def create_event(self, title, start_time, end_time=None, description=None, 
-                    location=None, attendees=None, calendar_id='primary'):
+                    location=None, attendees=None, calendar_id='primary', recurrence=None, 
+                    enforce_boundaries=True):
         """
         Create a new calendar event.
         
@@ -123,6 +179,8 @@ class CalendarManager:
             location (str): Event location
             attendees (list): List of attendee email addresses
             calendar_id (str): Calendar ID to create event in
+            recurrence (list): List of RRULE strings for recurring events
+            enforce_boundaries (bool): Whether to enforce 10am-7pm time boundaries
         
         Returns:
             dict: Created event information
@@ -137,6 +195,21 @@ class CalendarManager:
                 end_time = start_time + datetime.timedelta(hours=1)
             elif isinstance(end_time, str):
                 end_time = self.parse_datetime(end_time)
+            
+            # Enforce time boundaries (10 AM - 7 PM) as per CLAUDE.md
+            if enforce_boundaries:
+                start_hour = start_time.hour
+                end_hour = end_time.hour
+                
+                if start_hour < 10:
+                    print(f"⚠️  WARNING: Event starts at {start_time.strftime('%I:%M %p')} which is before 10 AM boundary")
+                    print("   As per CLAUDE.md guidelines, events should not be scheduled before 10 AM")
+                    return None
+                    
+                if end_hour > 19 or (end_hour == 19 and end_time.minute > 0):
+                    print(f"⚠️  WARNING: Event ends at {end_time.strftime('%I:%M %p')} which is after 7 PM boundary")  
+                    print("   As per CLAUDE.md guidelines, events should not be scheduled after 7 PM")
+                    return None
             
             # Create event body
             event = {
@@ -157,6 +230,8 @@ class CalendarManager:
                 event['location'] = location
             if attendees:
                 event['attendees'] = [{'email': email} for email in attendees]
+            if recurrence:
+                event['recurrence'] = recurrence
             
             # Create the event
             created_event = self.service.events().insert(
@@ -173,6 +248,61 @@ class CalendarManager:
         except Exception as e:
             print(f"Error creating event: {e}")
             return None
+    
+    def parse_recurrence_rule(self, description):
+        """
+        Parse natural language description to create RRULE for recurring events.
+        
+        Args:
+            description (str): Event description with recurrence info
+            
+        Returns:
+            list: List of RRULE strings or None if no recurrence found
+        """
+        description_lower = description.lower()
+        
+        # Daily patterns
+        if any(pattern in description_lower for pattern in ['every day', 'daily']):
+            # Extract duration if specified (e.g., "for 5 days", "for 2 weeks")
+            if 'for' in description_lower:
+                import re
+                # Look for "for X days/weeks"
+                duration_match = re.search(r'for\s+(\d+)\s+(days?|weeks?)', description_lower)
+                if duration_match:
+                    count = int(duration_match.group(1))
+                    unit = duration_match.group(2)
+                    if 'week' in unit:
+                        count *= 7  # Convert weeks to days
+                    return [f'RRULE:FREQ=DAILY;COUNT={count}']
+            return ['RRULE:FREQ=DAILY;COUNT=30']  # Default to 30 days
+        
+        # Weekly patterns
+        if any(pattern in description_lower for pattern in ['every week', 'weekly']):
+            if 'for' in description_lower:
+                import re
+                duration_match = re.search(r'for\s+(\d+)\s+weeks?', description_lower)
+                if duration_match:
+                    count = int(duration_match.group(1))
+                    return [f'RRULE:FREQ=WEEKLY;COUNT={count}']
+            return ['RRULE:FREQ=WEEKLY;COUNT=12']  # Default to 12 weeks
+            
+        # Specific day patterns (e.g., "every Tuesday")
+        weekdays = {
+            'monday': 'MO', 'tuesday': 'TU', 'wednesday': 'WE', 
+            'thursday': 'TH', 'friday': 'FR', 'saturday': 'SA', 'sunday': 'SU'
+        }
+        
+        for day_name, day_code in weekdays.items():
+            if f'every {day_name}' in description_lower:
+                if 'for' in description_lower:
+                    import re
+                    duration_match = re.search(r'for\s+(\d+)\s+weeks?', description_lower)
+                    if duration_match:
+                        count = int(duration_match.group(1))
+                        return [f'RRULE:FREQ=WEEKLY;BYDAY={day_code};COUNT={count}']
+                return [f'RRULE:FREQ=WEEKLY;BYDAY={day_code};COUNT=12']  # Default to 12 weeks
+        
+        return None
     
     def get_events(self, time_min=None, time_max=None, max_results=10, 
                   calendar_id='primary'):

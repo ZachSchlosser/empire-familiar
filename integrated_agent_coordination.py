@@ -1142,19 +1142,7 @@ Protocol: {self.PROTOCOL_VERSION}
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Invalid counter-proposal confidence value: {e}")
                 
-                if 'Meeting Context' in tech_data:
-                    try:
-                        meeting_context_json = tech_data['Meeting Context']
-                        if meeting_context_json and meeting_context_json.strip():
-                            meeting_context = json.loads(meeting_context_json)
-                            if isinstance(meeting_context, dict):
-                                payload['meeting_context'] = meeting_context
-                            else:
-                                logger.warning("Counter-proposal meeting context JSON is not a valid object")
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse counter-proposal meeting context JSON: {e}")
-                    except Exception as e:
-                        logger.error(f"Error processing counter-proposal meeting context: {e}")
+                # Meeting Context already extracted above for all message types
             
         except Exception as e:
             logger.error(f"Critical error extracting payload from technical data: {e}")
@@ -2378,14 +2366,30 @@ class IntegratedCoordinationProtocol:
                 return None
             logger.info(f"Confirmed meeting time: {confirmed_time.start_time} - {confirmed_time.end_time}")
             
-            # Extract meeting context using the same pattern as _handle_schedule_request
+            # --- START: New Robust Context Extraction Block ---
+            meeting_context_dict = None
             if "meeting_context" not in message.payload:
-                logger.error("❌ No meeting context found in confirmation")
-                return None
-            
-            logger.info("✅ Extracting meeting context directly from confirmation message")
-            # Parse meeting context with proper enum handling - same as _handle_schedule_request
-            context_data = message.payload["meeting_context"].copy()
+                logger.warning("❌ No meeting context found in confirmation payload - attempting recovery from conversation history")
+                # Fall back to finding it in the conversation history
+                conversation = self.active_conversations.get(message.conversation_id, [])
+                for msg in conversation:
+                    if msg.message_type == MessageType.SCHEDULE_REQUEST:
+                        meeting_context_dict = msg.payload.get("meeting_context", {})
+                        if meeting_context_dict:
+                            logger.info(f"📋 Recovered meeting context from original request: subject='{meeting_context_dict.get('subject', 'Unknown')}'")
+                            break
+                
+                # If still no context found, it's a critical failure for a confirmation.
+                if not meeting_context_dict:
+                    logger.error("❌ CRITICAL: Unable to recover meeting context for confirmation. Cannot create calendar event.")
+                    return None  # Fail gracefully
+            else:
+                meeting_context_dict = message.payload["meeting_context"]
+                logger.info("✅ Found meeting context directly in confirmation message payload")
+
+            # This line remains to prepare the context for use in the rest of the function
+            context_data = meeting_context_dict.copy()
+            # --- END: New Robust Context Extraction Block ---
             
             # Filter context_data to only include valid MeetingContext fields
             valid_fields = {'meeting_type', 'duration_minutes', 'attendees', 'subject', 'description', 'energy_requirement', 'requires_preparation'}
@@ -2534,14 +2538,35 @@ class IntegratedCoordinationProtocol:
             # Remove hardcoded negotiation limit - let natural termination handle it
             # The system will naturally terminate when no more alternatives can be found
             
-            # Extract meeting context using the same pattern as _handle_schedule_request
+            # --- START: New Robust Context Extraction Block ---
+            meeting_context_dict = None
             if "meeting_context" not in message.payload:
-                logger.error("❌ No meeting context found in counter-proposal")
-                return self._create_rejection_message(message, "Invalid counter-proposal format - missing meeting context")
-            
-            logger.info("✅ Extracting meeting context directly from counter-proposal message")
-            # Parse meeting context with proper enum handling - same as _handle_schedule_request
-            context_data = message.payload["meeting_context"].copy()
+                logger.warning("❌ No meeting context found in counter-proposal payload - attempting recovery from conversation history")
+                # Fall back to finding it in the conversation history
+                conversation = self.active_conversations.get(message.conversation_id, [])
+                for msg in conversation:
+                    if msg.message_type == MessageType.SCHEDULE_REQUEST:
+                        meeting_context_dict = msg.payload.get("meeting_context", {})
+                        if meeting_context_dict:
+                            logger.info(f"📋 Recovered meeting context from original request: subject='{meeting_context_dict.get('subject', 'Unknown')}'")
+                            break
+                
+                # If still no context found, create a minimal fallback to avoid failure
+                if not meeting_context_dict:
+                    logger.warning("❌ Unable to recover meeting context from history. Creating minimal fallback for counter-proposal.")
+                    meeting_context_dict = {
+                        'subject': 'Coordination Meeting',
+                        'meeting_type': 'coordination_meeting',
+                        'duration_minutes': 60,  # Default or infer from proposed times
+                        'attendees': [message.from_agent.user_email, self.agent_identity.user_email]
+                    }
+            else:
+                meeting_context_dict = message.payload["meeting_context"]
+                logger.info("✅ Found meeting context directly in counter-proposal message payload")
+
+            # This line remains to prepare the context for use in the rest of the function
+            context_data = meeting_context_dict.copy()
+            # --- END: New Robust Context Extraction Block ---
             
             # Filter context_data to only include valid MeetingContext fields
             valid_fields = {'meeting_type', 'duration_minutes', 'attendees', 'subject', 'description', 'energy_requirement', 'requires_preparation'}
